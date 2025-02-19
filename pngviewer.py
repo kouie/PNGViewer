@@ -1,13 +1,48 @@
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
-                           QHBoxLayout, QLabel, QSplitter, QPushButton, 
+                           QHBoxLayout, QLabel, QSplitter, QPushButton, QTextEdit,
                            QFileDialog, QTabWidget, QScrollArea, QFrame)
 from PyQt5.QtCore import Qt, QSize
 from PyQt5.QtGui import QPixmap, QDragEnterEvent, QDropEvent, QColor
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui import QFont, QTextCharFormat, QTextCursor, QFontMetrics
 import os
 import re
 from PIL import Image
 from PIL.PngImagePlugin import PngImageFile
+
+class PromptLabel(QTextEdit):
+    def __init__(self, textedit="", value="", parent=None):
+        super().__init__(parent)
+        self.textedit = textedit
+#        self.setFont(QFont('SansSerif', 12))
+#        self.setTextFormat(Qt.RichText)
+#        self.setWordWrap(True) 
+#        self.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.setFrameStyle(0)  # 枠線を非表示
+        self.setReadOnly(True)  # 編集不可
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)  # スクロールバー非表示
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setStyleSheet("background: transparent;")
+
+    def apply_highlight(self, words_to_highlight, color):
+        doc = self.document()  # QTextDocument を取得
+        format = QTextCharFormat()
+        format.setBackground(color)
+
+        for word in words_to_highlight:
+            cursor = QTextCursor(doc)  # 新しいカーソルを作成（ドキュメントの先頭）
+            while True:
+                cursor = doc.find(word, cursor)  # `word` を検索
+                if cursor.isNull():  # 見つからなければ終了
+                    break
+                cursor.mergeCharFormat(format)  # ハイライト適用
+
+    def adjust_text_edit_height(self):
+        """QTextEdit の高さをテキスト内容に応じて自動調整"""
+        document = self.document()
+        document.setTextWidth(self.viewport().width())
+        height = int(document.size().height())
+        height = QFontMetrics(document().defaultFont()).boundingRect(document).height() 
+        self.setFixedHeight(height + 5)  # 余白分を加味
 
 class MetadataLabel(QLabel):
     def __init__(self, label="", value="", parent=None):
@@ -24,6 +59,14 @@ class MetadataLabel(QLabel):
             self.setText(f"<b>{self.label}:</b> <span style='background-color: #FFEB3B'>{self.value}</span>")
         else:
             self.setText(f"<b>{self.label}:</b> {self.value}")
+
+    def apply_highlight(self, words_to_highlight, color):
+        all_text = self.value 
+        for word in words_to_highlight:
+            htext = '<span style="background-color: '+color+';">'+word+'</span>'
+            all_text = all_text.replace(word, htext)
+
+        self.setText(f"<b>{self.label}:</b> {all_text}")
 
 class ImageViewer(QMainWindow):
     def __init__(self):
@@ -229,9 +272,65 @@ class ImageViewer(QMainWindow):
             child = right_layout.takeAt(0)
             if child.widget():
                 child.widget().deleteLater()
-        
+
+        """
+        for key in ["Prompt", "Negative prompt"]:
+            left_value = left_metadata.get(key, "")
+            right_value = right_metadata.get(key, "")
+
+
+            # カンマ区切りでリスト化（余分なスペースを削除）
+            list1 = [s.strip() for s in left_value.split(",") if s.strip()]
+            list2 = [s.strip() for s in right_value.split(",") if s.strip()]
+
+            # セット化して差分を取得
+            left_set, right_set = set(list1), set(list2)
+            only_in_left = left_set - right_set
+            only_in_right = right_set - left_set
+
+            # 左側のメタデータを表示
+            left_tedit = PromptLabel(key, left_value)
+            left_tedit.setPlainText(left_value)
+            left_layout.addWidget(left_tedit)
+            left_tedit.apply_highlight(only_in_left, QColor("yellow"))
+            
+            # 右側のメタデータを表示
+            right_tedit = PromptLabel(key, right_value)
+            right_tedit.setPlainText(right_value)
+            right_layout.addWidget(right_tedit)
+            right_tedit.apply_highlight(only_in_right, QColor("cyan"))
+            
+            left_tedit.adjust_text_edit_height()
+        """
+
+        for key in ["Prompt", "Negative prompt"]:
+            left_value = left_metadata.get(key, "")
+            right_value = right_metadata.get(key, "")
+
+            # カンマ区切りでリスト化（余分なスペースを削除）
+            list1 = [s.strip() for s in left_value.split(",") if s.strip()]
+            list2 = [s.strip() for s in right_value.split(",") if s.strip()]
+
+            # セット化して差分を取得
+            left_set, right_set = set(list1), set(list2)
+            only_in_left = left_set - right_set
+            only_in_right = right_set - left_set
+
+            # 左側のメタデータを表示
+            left_label = MetadataLabel(key, left_value)
+            left_layout.addWidget(left_label)
+
+            left_label.apply_highlight(only_in_left, "yellow")
+            
+            # 右側のメタデータを表示
+            right_label = MetadataLabel(key, right_value)
+            right_layout.addWidget(right_label)
+
+            right_label.apply_highlight(only_in_right, "cyan")
+
+
         # メタデータを比較しながら表示
-        for key in ["Prompt", "Negative prompt", "Steps", "Sampler", "CFG scale", 
+        for key in ["Steps", "Sampler", "CFG scale", 
                    "Seed", "Size", "Model hash", "Model", "VAE hash", "VAE", 
                    "Denoising strength", "Clip skip", "Version"]:
             left_value = left_metadata.get(key, "")
@@ -408,6 +507,24 @@ class ImageViewer(QMainWindow):
 
                 # 各ラベルのサイズに合わせて画像をリサイズ
                 self.image_label.setPixmap(img1.scaled(self.image_label.width(), sizes[0], Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+        else:
+            sender = self.sender()
+            if sender == self.left_view["splitter"]:
+                sizes = self.left_view["splitter"].sizes()  # 各ウィジェットのサイズを取得
+
+                img1 = QPixmap(self.left_view["current_image_path"])
+                self.left_view["image_label"].setPixmap(img1.scaled(self.left_view["image_label"].width(), sizes[0], Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+                img2 = QPixmap(self.right_view["current_image_path"])
+                self.right_view["image_label"].setPixmap(img2.scaled(self.left_view["image_label"].width(), sizes[0], Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                self.right_view["splitter"].setSizes(sizes)
+
+            elif sender == self.right_view["splitter"]:
+                sizes = self.right_view["splitter"].sizes()  # 各ウィジェットのサイズを取得
+                img1 = QPixmap(self.right_view["current_image_path"])
+                self.right_view["image_label"].setPixmap(img1.scaled(self.right_view["image_label"].width(), sizes[0], Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
 
     def resizeEvent(self, event):
         """ウィンドウリサイズ時にも画像を更新"""
