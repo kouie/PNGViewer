@@ -1,7 +1,7 @@
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                            QHBoxLayout, QLabel, QSplitter, QPushButton, QTextEdit,
                            QFileDialog, QTabWidget, QScrollArea, QFrame)
-from PyQt5.QtCore import Qt, QSize
+from PyQt5.QtCore import Qt, QSize, QRect, QEvent 
 from PyQt5.QtGui import QPixmap, QDragEnterEvent, QDropEvent, QColor
 from PyQt5.QtGui import QFont, QTextCharFormat, QTextCursor, QFontMetrics
 import os
@@ -96,6 +96,9 @@ class ImageViewer(QMainWindow):
         self.current_image_path = ""
 
         self.setAcceptDrops(True) 
+        self.image_label.installEventFilter(self)
+        self.left_view["image_label"].installEventFilter(self)
+        self.right_view["image_label"].installEventFilter(self)
         
     def setup_single_view(self):
         layout = QVBoxLayout(self.single_view)
@@ -191,6 +194,9 @@ class ImageViewer(QMainWindow):
         
         # Negative promptの位置を見つける
         neg_prompt_index = text.find("Negative prompt:")
+        if neg_prompt_index == -1:
+            neg_prompt_index = text.find("Steps:")
+
         if neg_prompt_index != -1:
             # プロンプトを抽出
             prompt = text[:neg_prompt_index].strip()
@@ -220,7 +226,7 @@ class ImageViewer(QMainWindow):
 
             params = remaining_text.split(",")
             for param in params:
-                key, value = param.split(":")
+                key, value = param.split(":",1)
                 key = key.strip()
                 value = value.strip()
                 metadata[key] = value
@@ -272,36 +278,6 @@ class ImageViewer(QMainWindow):
             child = right_layout.takeAt(0)
             if child.widget():
                 child.widget().deleteLater()
-
-        """
-        for key in ["Prompt", "Negative prompt"]:
-            left_value = left_metadata.get(key, "")
-            right_value = right_metadata.get(key, "")
-
-
-            # カンマ区切りでリスト化（余分なスペースを削除）
-            list1 = [s.strip() for s in left_value.split(",") if s.strip()]
-            list2 = [s.strip() for s in right_value.split(",") if s.strip()]
-
-            # セット化して差分を取得
-            left_set, right_set = set(list1), set(list2)
-            only_in_left = left_set - right_set
-            only_in_right = right_set - left_set
-
-            # 左側のメタデータを表示
-            left_tedit = PromptLabel(key, left_value)
-            left_tedit.setPlainText(left_value)
-            left_layout.addWidget(left_tedit)
-            left_tedit.apply_highlight(only_in_left, QColor("yellow"))
-            
-            # 右側のメタデータを表示
-            right_tedit = PromptLabel(key, right_value)
-            right_tedit.setPlainText(right_value)
-            right_layout.addWidget(right_tedit)
-            right_tedit.apply_highlight(only_in_right, QColor("cyan"))
-            
-            left_tedit.adjust_text_edit_height()
-        """
 
         for key in ["Prompt", "Negative prompt"]:
             left_value = left_metadata.get(key, "")
@@ -374,18 +350,12 @@ class ImageViewer(QMainWindow):
                 target["current_path"] = image_path
 
                 # 両方の画像が読み込まれている場合は比較表示
-                if (self.left_view["image_label"].pixmap() and 
-                    self.right_view["image_label"].pixmap()):
-                    left_metadata = self.extract_png_metadata(
-                        self.left_view.get("current_path", ""))
-                    right_metadata = self.extract_png_metadata(
-                        self.right_view.get("current_path", ""))
+                if (self.left_view["image_label"].pixmap() and self.right_view["image_label"].pixmap()):
+                    left_metadata = self.extract_png_metadata(self.left_view.get("current_path", ""))
+                    right_metadata = self.extract_png_metadata(self.right_view.get("current_path", ""))
+
                     self.compare_metadata(left_metadata, right_metadata)
                   
-#        print(self.single_view.geometry())
-#        print(self.left_view["container"].geometry())
-#        print(self.right_view["container"].geometry())
-        
     def scale_pixmap(self, pixmap, size):
         return pixmap.scaled(size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             
@@ -409,7 +379,14 @@ class ImageViewer(QMainWindow):
                 if len(image_files) > 1:
                     self.load_image(os.path.join(self.current_folder, image_files[1]), 
                                   self.right_view)
-                    
+        else:
+            self.image_label.setText("no png files found")
+            self.current_image_path = ""
+            while self.metadata_layout.count():
+                child = self.metadata_layout.takeAt(0)
+                if child.widget():
+                    child.widget().deleteLater()
+
     def copy_seed(self):
         # 現在のタブに応じてSeedをクリップボードにコピー
         if self.tab_widget.currentIndex() == 0:  # Single view
@@ -430,11 +407,14 @@ class ImageViewer(QMainWindow):
                     if isinstance(widget, MetadataLabel) and widget.label == "Seed":
                         QApplication.clipboard().setText(widget.value)
                         break
-            
-    def wheelEvent(self, event):
+
+    def wheelEvent1(self, event):
         if self.current_folder and self.tab_widget.currentIndex() == 0:  # Single view
             image_files = sorted([f for f in os.listdir(self.current_folder) 
                                 if f.lower().endswith(('.png'))])
+            if image_files == []:
+                return
+            
             current_index = image_files.index(os.path.basename(self.current_image_path))
             
             if event.angleDelta().y() > 0:
@@ -444,39 +424,37 @@ class ImageViewer(QMainWindow):
                 
             self.load_image(os.path.join(self.current_folder, image_files[new_index]))
 
-        elif self.tab_widget.currentIndex() != 0:  # multi vew
-            pos = event.pos()
-            if self.left_view["container"].geometry().contains(pos):
-                if self.left_view["current_folder"] == "":
-                    return
+    def wheelEvent2(self, event, cview):
+        if self.tab_widget.currentIndex() != 0:  # multi vew
+
+            if cview["current_folder"] == "":
+                return
                  
-                image_files = sorted([f for f in os.listdir(self.left_view["current_folder"]) 
-                                if f.lower().endswith(('.png'))])
-                current_index = image_files.index(os.path.basename(self.left_view["current_image_path"]))
+            image_files = sorted([f for f in os.listdir(cview["current_folder"]) 
+                            if f.lower().endswith(('.png'))])
+            current_index = image_files.index(os.path.basename(cview["current_image_path"]))
             
-                if event.angleDelta().y() > 0:
-                    new_index = (current_index - 1) % len(image_files)
-                else:
-                    new_index = (current_index + 1) % len(image_files)
-                
-                self.load_image(os.path.join(self.left_view["current_folder"], image_files[new_index]), self.left_view)
-
-            elif self.right_view["container"].geometry().contains(pos):
-                if self.right_view["current_folder"] == "":
-                    return
-                 
-                image_files = sorted([f for f in os.listdir(self.right_view["current_folder"]) 
-                                if f.lower().endswith(('.png'))])
-                current_index = image_files.index(os.path.basename(self.right_view["current_image_path"]))
+            if event.angleDelta().y() > 0:
+                new_index = (current_index - 1) % len(image_files)
+            else:
+                new_index = (current_index + 1) % len(image_files)
             
-                if event.angleDelta().y() > 0:
-                    new_index = (current_index - 1) % len(image_files)
-                else:
-                    new_index = (current_index + 1) % len(image_files)
-                
-                self.load_image(os.path.join(self.right_view["current_folder"], image_files[new_index]), self.right_view)
+            self.load_image(os.path.join(cview["current_folder"], image_files[new_index]), cview)
 
 
+
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.Wheel:
+            # ホイールイベント処理
+            if watched == self.image_label:
+                self.wheelEvent1(event)
+            elif watched == self.left_view["image_label"]:
+                self.wheelEvent2(event, self.left_view)
+            elif watched == self.right_view["image_label"]:
+                self.wheelEvent2(event, self.right_view)
+
+        return super().eventFilter(watched, event)
+    
 
     def dragEnterEvent(self, event: QDragEnterEvent):
         if event.mimeData().hasUrls():
@@ -486,9 +464,9 @@ class ImageViewer(QMainWindow):
         files = [u.toLocalFile() for u in event.mimeData().urls()]
         if files:
             if os.path.isfile(files[0]) and files[0].lower().endswith('.png'):
-                self.current_folder = os.path.dirname(files[0])
                 if self.tab_widget.currentIndex() == 0:  # Single view
                     self.load_image(files[0])
+                    self.current_folder = os.path.dirname(files[0])
                 else:  # Compare view
                     pos = event.pos()
                     if self.left_view["container"].geometry().contains(pos):
