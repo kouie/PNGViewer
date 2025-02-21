@@ -68,6 +68,24 @@ class MetadataLabel(QLabel):
 
         self.setText(f"<b>{self.label}:</b> {all_text}")
 
+class MyLabel(QLabel):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # マウスイベントを追跡
+        self.setMouseTracking(True)
+    
+    def wheelEvent(self, event):
+        self.parent().parent().parent().parent().parent().parent().parent().parent().wheelEvent1(event)
+        event.accept()
+        """
+        # ラベル上でのホイールイベントを直接処理
+        if event.angleDelta().y() > 0:
+            self.parent().showNextImage()  # 親ウィジェットのメソッド呼び出し
+        else:
+            self.parent().showPrevImage()
+        event.accept()
+        """
+
 class ImageViewer(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -90,7 +108,7 @@ class ImageViewer(QMainWindow):
         self.setup_compare_view()
         self.tab_widget.addTab(self.compare_view, "Compare View")
         
-        self.setup_toolbar()
+#        self.setup_toolbar()
         
         self.current_folder = ""
         self.current_image_path = ""
@@ -102,6 +120,11 @@ class ImageViewer(QMainWindow):
         
     def setup_single_view(self):
         layout = QVBoxLayout(self.single_view)
+
+        toolbar = self.setup_toolbar1()
+        send_button = QPushButton()
+        toolbar.addWidget(send_button)
+        layout.addLayout(toolbar)
         
         self.splitter = QSplitter(Qt.Vertical)
         layout.addWidget(self.splitter)
@@ -115,7 +138,7 @@ class ImageViewer(QMainWindow):
         self.image_label.setAlignment(Qt.AlignCenter)
         scroll_area.setWidget(self.image_label)
         self.splitter.addWidget(scroll_area)
-        
+             
         # メタデータ表示用のスクロールエリア
         metadata_scroll = QScrollArea()
         metadata_scroll.setWidgetResizable(True)
@@ -140,7 +163,9 @@ class ImageViewer(QMainWindow):
     def create_image_view(self):
         container = QWidget()
         layout = QVBoxLayout(container)
-        
+        toolbar = self.setup_toolbar1()
+        layout.addLayout(toolbar)
+
         splitter = QSplitter(Qt.Vertical)
         layout.addWidget(splitter)
         
@@ -153,7 +178,7 @@ class ImageViewer(QMainWindow):
         image_label.setAlignment(Qt.AlignCenter)
         scroll_area.setWidget(image_label)
         splitter.addWidget(scroll_area)
-        
+
         # メタデータ表示用のスクロールエリア
         metadata_scroll = QScrollArea()
         metadata_scroll.setWidgetResizable(True)
@@ -188,7 +213,23 @@ class ImageViewer(QMainWindow):
         toolbar.addWidget(copy_seed_button)
         
         toolbar.addStretch()
+
+    def setup_toolbar1(self):
+        toolbar = QHBoxLayout()
+#        layout.insertLayout(0, toolbar)
         
+        open_button = QPushButton("Open Folder")
+        open_button.clicked.connect(self.open_folder)
+        toolbar.addWidget(open_button)
+        
+        copy_seed_button = QPushButton("Copy Seed")
+        copy_seed_button.clicked.connect(self.copy_seed)
+        toolbar.addWidget(copy_seed_button)
+        
+        toolbar.addStretch()
+ 
+        return toolbar
+
     def parse_metadata(self, text):
         metadata = {}
         
@@ -502,6 +543,15 @@ class ImageViewer(QMainWindow):
                 sizes = self.right_view["splitter"].sizes()  # 各ウィジェットのサイズを取得
                 img1 = QPixmap(self.right_view["current_image_path"])
                 self.right_view["image_label"].setPixmap(img1.scaled(self.right_view["image_label"].width(), sizes[0], Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+            else:
+                if self.current_folder:
+                    sizes1 = self.left_view["splitter"].sizes()  # 各ウィジェットのサイズを取得
+                    img1 = QPixmap(self.left_view["current_image_path"])
+                    self.left_view["image_label"].setPixmap(img1.scaled(self.left_view["image_label"].width(), sizes1[0], Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                    sizes2 = self.right_view["splitter"].sizes()  # 各ウィジェットのサイズを取得
+                    img2 = QPixmap(self.right_view["current_image_path"])
+                    self.right_view["image_label"].setPixmap(img2.scaled(self.right_view["image_label"].width(), sizes2[0], Qt.KeepAspectRatio, Qt.SmoothTransformation))
 
 
     def resizeEvent(self, event):
