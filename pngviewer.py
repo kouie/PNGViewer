@@ -8,41 +8,7 @@ import os
 import re
 from PIL import Image
 from PIL.PngImagePlugin import PngImageFile
-
-class PromptLabel(QTextEdit):
-    def __init__(self, textedit="", value="", parent=None):
-        super().__init__(parent)
-        self.textedit = textedit
-#        self.setFont(QFont('SansSerif', 12))
-#        self.setTextFormat(Qt.RichText)
-#        self.setWordWrap(True) 
-#        self.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.setFrameStyle(0)  # 枠線を非表示
-        self.setReadOnly(True)  # 編集不可
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)  # スクロールバー非表示
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.setStyleSheet("background: transparent;")
-
-    def apply_highlight(self, words_to_highlight, color):
-        doc = self.document()  # QTextDocument を取得
-        format = QTextCharFormat()
-        format.setBackground(color)
-
-        for word in words_to_highlight:
-            cursor = QTextCursor(doc)  # 新しいカーソルを作成（ドキュメントの先頭）
-            while True:
-                cursor = doc.find(word, cursor)  # `word` を検索
-                if cursor.isNull():  # 見つからなければ終了
-                    break
-                cursor.mergeCharFormat(format)  # ハイライト適用
-
-    def adjust_text_edit_height(self):
-        """QTextEdit の高さをテキスト内容に応じて自動調整"""
-        document = self.document()
-        document.setTextWidth(self.viewport().width())
-        height = int(document.size().height())
-        height = QFontMetrics(document().defaultFont()).boundingRect(document).height() 
-        self.setFixedHeight(height + 5)  # 余白分を加味
+from functools import partial
 
 class MetadataLabel(QLabel):
     def __init__(self, label="", value="", parent=None):
@@ -54,6 +20,7 @@ class MetadataLabel(QLabel):
         self.setWordWrap(True) 
         self.update_text()
         self.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+
     def update_text(self, highlight=False):
         if highlight:
             self.setText(f"<b>{self.label}:</b> <span style='background-color: #FFEB3B'>{self.value}</span>")
@@ -74,18 +41,6 @@ class MyLabel(QLabel):
         # マウスイベントを追跡
         self.setMouseTracking(True)
     
-    def wheelEvent(self, event):
-        self.parent().parent().parent().parent().parent().parent().parent().parent().wheelEvent1(event)
-        event.accept()
-        """
-        # ラベル上でのホイールイベントを直接処理
-        if event.angleDelta().y() > 0:
-            self.parent().showNextImage()  # 親ウィジェットのメソッド呼び出し
-        else:
-            self.parent().showPrevImage()
-        event.accept()
-        """
-
 class ImageViewer(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -103,22 +58,21 @@ class ImageViewer(QMainWindow):
         self.single_view = QWidget()
         self.setup_single_view()
         self.tab_widget.addTab(self.single_view, "Single View")
-        
+
         self.compare_view = QWidget()
         self.setup_compare_view()
         self.tab_widget.addTab(self.compare_view, "Compare View")
-        
-#        self.setup_toolbar()
-        
-        self.current_folder = ""
-        self.current_image_path = ""
 
+        self.tab_widget.currentChanged.connect(self.update_images)
         self.setAcceptDrops(True) 
-        self.image_label.installEventFilter(self)
+
+        self.main_view["image_label"].installEventFilter(self)
         self.left_view["image_label"].installEventFilter(self)
         self.right_view["image_label"].installEventFilter(self)
+
+        self.views = [self.main_view, self.left_view, self.right_view]
         
-    def setup_single_view(self):
+    def setup_single_view0(self):
         layout = QVBoxLayout(self.single_view)
 
         toolbar = self.setup_toolbar1()
@@ -151,20 +105,41 @@ class ImageViewer(QMainWindow):
         self.splitter.setSizes([400, 500])
         self.splitter.splitterMoved.connect(self.update_images)
 
+    def setup_single_view(self):
+        layout = QVBoxLayout(self.single_view)
+        self.main_view = self.create_image_view(0)
+        toolbar = self.setup_toolbar1(0)
+        send_button = QPushButton("Send CP-view")
+        send_button.clicked.connect(self.send_to_cp)
+        toolbar.addWidget(send_button)
+        layout.insertLayout(0,toolbar)
+
+        layout.addWidget(self.main_view["container"])
+   
+
     def setup_compare_view(self):
         layout = QHBoxLayout(self.compare_view)
         
-        self.left_view = self.create_image_view()
-        self.right_view = self.create_image_view()
+        self.left_view = self.create_image_view(1)
+        left_layout = QVBoxLayout()
+        left_layout.addWidget(self.left_view["container"])
+        toolbar = self.setup_toolbar1(1)
+        left_layout.insertLayout(0,toolbar)
+
+        self.right_view = self.create_image_view(2)
+        right_layout = QVBoxLayout()
+        right_layout.addWidget(self.right_view["container"])
+        toolbar = self.setup_toolbar1(2)
+        right_layout.insertLayout(0,toolbar)
         
-        layout.addWidget(self.left_view["container"])
-        layout.addWidget(self.right_view["container"])
+        layout.addLayout(left_layout)
+        layout.addLayout(right_layout)
         
-    def create_image_view(self):
+    def create_image_view(self, set_id):
         container = QWidget()
         layout = QVBoxLayout(container)
-        toolbar = self.setup_toolbar1()
-        layout.addLayout(toolbar)
+#        toolbar = self.setup_toolbar1(set_id)
+#        layout.addLayout(toolbar)
 
         splitter = QSplitter(Qt.Vertical)
         layout.addWidget(splitter)
@@ -197,8 +172,8 @@ class ImageViewer(QMainWindow):
                 "metadata_layout": metadata_layout,
                 "splitter": splitter,
                 "current_folder": "",
-                "current_image_path": ""}
-#       return container
+                "current_image_path": "",
+                "set_id": set_id}
         
     def setup_toolbar(self):
         toolbar = QHBoxLayout()
@@ -214,16 +189,15 @@ class ImageViewer(QMainWindow):
         
         toolbar.addStretch()
 
-    def setup_toolbar1(self):
+    def setup_toolbar1(self, set_id):
         toolbar = QHBoxLayout()
-#        layout.insertLayout(0, toolbar)
         
         open_button = QPushButton("Open Folder")
-        open_button.clicked.connect(self.open_folder)
+        open_button.clicked.connect( partial(self.open_folder, set_id) )
         toolbar.addWidget(open_button)
         
         copy_seed_button = QPushButton("Copy Seed")
-        copy_seed_button.clicked.connect(self.copy_seed)
+        copy_seed_button.clicked.connect( partial(self.copy_seed, set_id) )
         toolbar.addWidget(copy_seed_button)
         
         toolbar.addStretch()
@@ -232,7 +206,7 @@ class ImageViewer(QMainWindow):
 
     def parse_metadata(self, text):
         metadata = {}
-        
+
         # Negative promptの位置を見つける
         neg_prompt_index = text.find("Negative prompt:")
         if neg_prompt_index == -1:
@@ -372,14 +346,15 @@ class ImageViewer(QMainWindow):
     def load_image(self, image_path, target=None):
         pixmap = QPixmap(image_path)
         if not pixmap.isNull():
-            if target is None:  # Single view
-                scaled_pixmap = self.scale_pixmap(pixmap, self.image_label.size())
-                self.image_label.setPixmap(scaled_pixmap)
-                self.current_image_path = image_path
+#            if self.tab_widget.currentIndex() == 0:  # Single view
+            if target == self.main_view:  # Single view
+                scaled_pixmap = self.scale_pixmap(pixmap, target["image_label"].size())
+                target["image_label"].setPixmap(scaled_pixmap)
+                target["current_image_path"] = image_path
                 
                 # メタデータを読み込んで表示
                 metadata = self.extract_png_metadata(image_path)
-                self.display_metadata(metadata, self.metadata_layout)
+                self.display_metadata(metadata, target["metadata_layout"])
             else:  # Compare view
                 scaled_pixmap = self.scale_pixmap(pixmap, target["image_label"].size())
                 target["image_label"].setPixmap(scaled_pixmap)
@@ -388,92 +363,63 @@ class ImageViewer(QMainWindow):
                 # メタデータを読み込む
                 metadata = self.extract_png_metadata(image_path)
                 self.display_metadata(metadata, target["metadata_layout"])
-                target["current_path"] = image_path
+                target["current_image_path"] = image_path
 
                 # 両方の画像が読み込まれている場合は比較表示
-                if (self.left_view["image_label"].pixmap() and self.right_view["image_label"].pixmap()):
-                    left_metadata = self.extract_png_metadata(self.left_view.get("current_path", ""))
-                    right_metadata = self.extract_png_metadata(self.right_view.get("current_path", ""))
+                if (self.left_view["current_image_path"] and self.right_view["current_image_path"]):
+                    left_metadata = self.extract_png_metadata(self.left_view.get("current_image_path", ""))
+                    right_metadata = self.extract_png_metadata(self.right_view.get("current_image_path", ""))
 
                     self.compare_metadata(left_metadata, right_metadata)
                   
     def scale_pixmap(self, pixmap, size):
         return pixmap.scaled(size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             
-    def open_folder(self):
-        folder = QFileDialog.getExistingDirectory(self, "Select Folder")
+    def open_folder(self, set_id):
+        if self.views[set_id]["current_image_path"] == "":
+            folder = QFileDialog.getExistingDirectory(self, "Select Folder")
+        else:
+            folder = QFileDialog.getExistingDirectory(self, "Select Folder", self.views[set_id]["current_folder"])
+
         if folder:
-            self.current_folder = folder
-            self.load_first_image()
+            self.views[set_id]["current_folder"] = folder
+            self.load_first_image(set_id)
             
-    def load_first_image(self):
-        image_files = [f for f in os.listdir(self.current_folder) 
+    def load_first_image(self, set_id):
+        view = self.views[set_id]
+        current_folder = view["current_folder"]
+        image_files = [f for f in os.listdir(current_folder) 
                       if f.lower().endswith(('.png'))]
         if image_files:
-            if self.tab_widget.currentIndex() == 0:  # Single view
-                self.load_image(os.path.join(self.current_folder, image_files[0]))
-            else:  # Compare view
-                # 左側に最初の画像を読み込む
-                self.load_image(os.path.join(self.current_folder, image_files[0]), 
-                              self.left_view)
-                # 2枚目の画像があれば右側に読み込む
-                if len(image_files) > 1:
-                    self.load_image(os.path.join(self.current_folder, image_files[1]), 
-                                  self.right_view)
+            self.load_image(os.path.join(current_folder, image_files[0]), view)
+
         else:
-            self.image_label.setText("no png files found")
-            self.current_image_path = ""
-            while self.metadata_layout.count():
-                child = self.metadata_layout.takeAt(0)
+            view["image_label"].setText("no png files found")
+            self.views[set_id]["current_image_path"] = ""
+            while view["metadata_layout"].count():
+                child = view["metadata_layout"].takeAt(0)
                 if child.widget():
                     child.widget().deleteLater()
 
-    def copy_seed(self):
+    def copy_seed(self, set_id):
         # 現在のタブに応じてSeedをクリップボードにコピー
-        if self.tab_widget.currentIndex() == 0:  # Single view
-            for i in range(self.metadata_layout.count()):
-                item = self.metadata_layout.itemAt(i)
-                if item and item.widget():
-                    widget = item.widget()
-                    if isinstance(widget, MetadataLabel) and widget.label == "Seed":
-                        QApplication.clipboard().setText(widget.value)
-                        break
-        else:  # Compare view
-            # アクティブな方のSeedをコピー
-            # TODO: 必要に応じて左右どちらのSeedをコピーするか選択できるように改善
-            for i in range(self.left_view["metadata_layout"].count()):
-                item = self.left_view["metadata_layout"].itemAt(i)
-                if item and item.widget():
-                    widget = item.widget()
-                    if isinstance(widget, MetadataLabel) and widget.label == "Seed":
-                        QApplication.clipboard().setText(widget.value)
-                        break
+        view = self.views[set_id].copy()
+        for i in range(view["metadata_layout"].count()):
+            item = view["metadata_layout"].itemAt(i)
+            if item and item.widget():
+                widget = item.widget()
+                if isinstance(widget, MetadataLabel) and widget.label == "Seed":
+                    QApplication.clipboard().setText(widget.value)
+                    break
 
-    def wheelEvent1(self, event):
-        if self.current_folder and self.tab_widget.currentIndex() == 0:  # Single view
-            image_files = sorted([f for f in os.listdir(self.current_folder) 
-                                if f.lower().endswith(('.png'))])
-            if image_files == []:
-                return
-            
-            current_index = image_files.index(os.path.basename(self.current_image_path))
-            
-            if event.angleDelta().y() > 0:
-                new_index = (current_index - 1) % len(image_files)
-            else:
-                new_index = (current_index + 1) % len(image_files)
-                
-            self.load_image(os.path.join(self.current_folder, image_files[new_index]))
-
-    def wheelEvent2(self, event, cview):
-        if self.tab_widget.currentIndex() != 0:  # multi vew
-
-            if cview["current_folder"] == "":
-                return
-                 
+    def change_image(self, event, cview):
+        if cview["current_folder"]:
             image_files = sorted([f for f in os.listdir(cview["current_folder"]) 
                             if f.lower().endswith(('.png'))])
-            current_index = image_files.index(os.path.basename(cview["current_image_path"]))
+            try:
+                current_index = image_files.index(os.path.basename(cview["current_image_path"]))
+            except:
+                return
             
             if event.angleDelta().y() > 0:
                 new_index = (current_index - 1) % len(image_files)
@@ -482,21 +428,23 @@ class ImageViewer(QMainWindow):
             
             self.load_image(os.path.join(cview["current_folder"], image_files[new_index]), cview)
 
-
+    def send_to_cp(self):
+        self.left_view["current_folder"] = self.main_view["current_folder"]
+        self.left_view["current_image_path"] = self.main_view["current_image_path"]
+        self.load_image(self.left_view["current_image_path"], self.left_view)
 
     def eventFilter(self, watched, event):
         if event.type() == QEvent.Wheel:
             # ホイールイベント処理
-            if watched == self.image_label:
-                self.wheelEvent1(event)
+            if watched == self.main_view["image_label"]:
+                self.change_image(event, self.main_view)
             elif watched == self.left_view["image_label"]:
-                self.wheelEvent2(event, self.left_view)
+                self.change_image(event, self.left_view)
             elif watched == self.right_view["image_label"]:
-                self.wheelEvent2(event, self.right_view)
+                self.change_image(event, self.right_view)
 
         return super().eventFilter(watched, event)
     
-
     def dragEnterEvent(self, event: QDragEnterEvent):
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
@@ -506,8 +454,8 @@ class ImageViewer(QMainWindow):
         if files:
             if os.path.isfile(files[0]) and files[0].lower().endswith('.png'):
                 if self.tab_widget.currentIndex() == 0:  # Single view
-                    self.load_image(files[0])
-                    self.current_folder = os.path.dirname(files[0])
+                    self.load_image(files[0], self.main_view)
+                    self.main_view["current_folder"] = os.path.dirname(files[0])
                 else:  # Compare view
                     pos = event.pos()
                     if self.left_view["container"].geometry().contains(pos):
@@ -519,39 +467,39 @@ class ImageViewer(QMainWindow):
 
     def update_images(self):
         """スプリッターのサイズに応じて画像をリサイズ"""
-        if self.tab_widget.currentIndex() == 0:  # Single view
-            if self.current_folder:
-                sizes = self.splitter.sizes()  # 各ウィジェットのサイズを取得
-                img1 = QPixmap(self.current_image_path)
+        sender = self.sender()
+        if sender == self.left_view["splitter"]:
+            sizes = self.left_view["splitter"].sizes()  # 各ウィジェットのサイズを取得
 
-                # 各ラベルのサイズに合わせて画像をリサイズ
-                self.image_label.setPixmap(img1.scaled(self.image_label.width(), sizes[0], Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            img1 = QPixmap(self.left_view["current_image_path"])
+            self.left_view["image_label"].setPixmap(img1.scaled(self.left_view["image_label"].width(), sizes[0], Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+            img2 = QPixmap(self.right_view["current_image_path"])
+            self.right_view["image_label"].setPixmap(img2.scaled(self.left_view["image_label"].width(), sizes[0], Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            self.right_view["splitter"].setSizes(sizes)
+
+        elif sender == self.right_view["splitter"]:
+            sizes = self.right_view["splitter"].sizes()  # 各ウィジェットのサイズを取得
+            img1 = QPixmap(self.right_view["current_image_path"])
+            self.right_view["image_label"].setPixmap(img1.scaled(self.right_view["image_label"].width(), sizes[0], Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+        elif sender == self.main_view["splitter"]:
+            sizes = self.main_view["splitter"].sizes()  # 各ウィジェットのサイズを取得
+            img1 = QPixmap(self.main_view["current_image_path"])
+            self.main_view["image_label"].setPixmap(img1.scaled(self.main_view["image_label"].width(), sizes[0], Qt.KeepAspectRatio, Qt.SmoothTransformation))
 
         else:
-            sender = self.sender()
-            if sender == self.left_view["splitter"]:
-                sizes = self.left_view["splitter"].sizes()  # 各ウィジェットのサイズを取得
+            sizes = self.main_view["splitter"].sizes()  # 各ウィジェットのサイズを取得
+            img1 = QPixmap(self.main_view["current_image_path"])
+            self.main_view["image_label"].setPixmap(img1.scaled(self.main_view["image_label"].width(), sizes[0], Qt.KeepAspectRatio, Qt.SmoothTransformation))
 
-                img1 = QPixmap(self.left_view["current_image_path"])
-                self.left_view["image_label"].setPixmap(img1.scaled(self.left_view["image_label"].width(), sizes[0], Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            sizes = self.left_view["splitter"].sizes()  # 各ウィジェットのサイズを取得
+            img1 = QPixmap(self.left_view["current_image_path"])
+            self.left_view["image_label"].setPixmap(img1.scaled(self.left_view["image_label"].width(), sizes[0], Qt.KeepAspectRatio, Qt.SmoothTransformation))
 
-                img2 = QPixmap(self.right_view["current_image_path"])
-                self.right_view["image_label"].setPixmap(img2.scaled(self.left_view["image_label"].width(), sizes[0], Qt.KeepAspectRatio, Qt.SmoothTransformation))
-                self.right_view["splitter"].setSizes(sizes)
-
-            elif sender == self.right_view["splitter"]:
-                sizes = self.right_view["splitter"].sizes()  # 各ウィジェットのサイズを取得
-                img1 = QPixmap(self.right_view["current_image_path"])
-                self.right_view["image_label"].setPixmap(img1.scaled(self.right_view["image_label"].width(), sizes[0], Qt.KeepAspectRatio, Qt.SmoothTransformation))
-
-            else:
-                if self.current_folder:
-                    sizes1 = self.left_view["splitter"].sizes()  # 各ウィジェットのサイズを取得
-                    img1 = QPixmap(self.left_view["current_image_path"])
-                    self.left_view["image_label"].setPixmap(img1.scaled(self.left_view["image_label"].width(), sizes1[0], Qt.KeepAspectRatio, Qt.SmoothTransformation))
-                    sizes2 = self.right_view["splitter"].sizes()  # 各ウィジェットのサイズを取得
-                    img2 = QPixmap(self.right_view["current_image_path"])
-                    self.right_view["image_label"].setPixmap(img2.scaled(self.right_view["image_label"].width(), sizes2[0], Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            sizes = self.right_view["splitter"].sizes()  # 各ウィジェットのサイズを取得
+            img1 = QPixmap(self.right_view["current_image_path"])
+            self.right_view["image_label"].setPixmap(img1.scaled(self.right_view["image_label"].width(), sizes[0], Qt.KeepAspectRatio, Qt.SmoothTransformation))
 
 
     def resizeEvent(self, event):
