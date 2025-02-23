@@ -66,12 +66,13 @@ class ImageViewer(QMainWindow):
         self.tab_widget.currentChanged.connect(self.update_images)
         self.setAcceptDrops(True) 
 
-        self.main_view["image_label"].installEventFilter(self)
-        self.left_view["image_label"].installEventFilter(self)
-        self.right_view["image_label"].installEventFilter(self)
-
         self.views = [self.main_view, self.left_view, self.right_view]
-        
+
+        for view in self.views:
+            view["image_label"].installEventFilter(self)
+            view["container"].setAcceptDrops(True)
+            view["container"].installEventFilter(self)
+
     def setup_single_view0(self):
         layout = QVBoxLayout(self.single_view)
 
@@ -436,71 +437,70 @@ class ImageViewer(QMainWindow):
     def eventFilter(self, watched, event):
         if event.type() == QEvent.Wheel:
             # ホイールイベント処理
-            if watched == self.main_view["image_label"]:
-                self.change_image(event, self.main_view)
-            elif watched == self.left_view["image_label"]:
-                self.change_image(event, self.left_view)
-            elif watched == self.right_view["image_label"]:
-                self.change_image(event, self.right_view)
+            for view in self.views:
+                if watched == view["image_label"]:
+                    self.change_image(event, view)
+                    return True
+
+        elif event.type() == QEvent.DragEnter:
+            # ドラッグされたデータを受け入れるかどうかを判断
+            if event.mimeData().hasUrls():
+                event.acceptProposedAction()
+            return True
+            
+        elif event.type() == QEvent.DragMove:
+            # 必要に応じてドラッグ中の位置をチェック
+            event.acceptProposedAction()
+            return True
+        
+        elif event.type() == QEvent.Drop:
+            for view in self.views:
+                if watched == view["container"]:
+                    self.dropped_image(event, view)
+                    return True
+            return True
 
         return super().eventFilter(watched, event)
     
-    def dragEnterEvent(self, event: QDragEnterEvent):
-        if event.mimeData().hasUrls():
-            event.acceptProposedAction()
+#    def dragEnterEvent(self, event: QDragEnterEvent):
+#        if event.mimeData().hasUrls():
+#            event.acceptProposedAction()
             
-    def dropEvent(self, event: QDropEvent):
+    def dropped_image(self, event, view):
         files = [u.toLocalFile() for u in event.mimeData().urls()]
         if files:
             if os.path.isfile(files[0]) and files[0].lower().endswith('.png'):
-                if self.tab_widget.currentIndex() == 0:  # Single view
-                    self.load_image(files[0], self.main_view)
-                    self.main_view["current_folder"] = os.path.dirname(files[0])
-                else:  # Compare view
-                    pos = event.pos()
-                    if self.left_view["container"].geometry().contains(pos):
-                        self.load_image(files[0], self.left_view)
-                        self.left_view["current_folder"] = os.path.dirname(files[0])
-                    elif self.right_view["container"].geometry().contains(pos):
-                        self.load_image(files[0], self.right_view)
-                        self.right_view["current_folder"] = os.path.dirname(files[0])
+                self.load_image(files[0], view)
+                view["current_folder"] = os.path.dirname(files[0])
+
+    def resize_image(self, view_id):
+        view = self.views[view_id]
+        if view["current_image_path"] != "":
+            sizes = view["splitter"].sizes()  # 各ウィジェットのサイズを取得
+            img = QPixmap(view["current_image_path"])
+            view["image_label"].setPixmap(img.scaled(view["image_label"].width(), sizes[0], Qt.KeepAspectRatio, Qt.SmoothTransformation))
 
     def update_images(self):
         """スプリッターのサイズに応じて画像をリサイズ"""
         sender = self.sender()
         if sender == self.left_view["splitter"]:
+            self.resize_image(1)
+
             sizes = self.left_view["splitter"].sizes()  # 各ウィジェットのサイズを取得
-
-            img1 = QPixmap(self.left_view["current_image_path"])
-            self.left_view["image_label"].setPixmap(img1.scaled(self.left_view["image_label"].width(), sizes[0], Qt.KeepAspectRatio, Qt.SmoothTransformation))
-
-            img2 = QPixmap(self.right_view["current_image_path"])
-            self.right_view["image_label"].setPixmap(img2.scaled(self.left_view["image_label"].width(), sizes[0], Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            if self.right_view["current_image_path"]:
+                img2 = QPixmap(self.right_view["current_image_path"])
+                self.right_view["image_label"].setPixmap(img2.scaled(self.left_view["image_label"].width(), sizes[0], Qt.KeepAspectRatio, Qt.SmoothTransformation))
             self.right_view["splitter"].setSizes(sizes)
 
         elif sender == self.right_view["splitter"]:
-            sizes = self.right_view["splitter"].sizes()  # 各ウィジェットのサイズを取得
-            img1 = QPixmap(self.right_view["current_image_path"])
-            self.right_view["image_label"].setPixmap(img1.scaled(self.right_view["image_label"].width(), sizes[0], Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            self.resize_image(2)
 
         elif sender == self.main_view["splitter"]:
-            sizes = self.main_view["splitter"].sizes()  # 各ウィジェットのサイズを取得
-            img1 = QPixmap(self.main_view["current_image_path"])
-            self.main_view["image_label"].setPixmap(img1.scaled(self.main_view["image_label"].width(), sizes[0], Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            self.resize_image(0)
 
         else:
-            sizes = self.main_view["splitter"].sizes()  # 各ウィジェットのサイズを取得
-            img1 = QPixmap(self.main_view["current_image_path"])
-            self.main_view["image_label"].setPixmap(img1.scaled(self.main_view["image_label"].width(), sizes[0], Qt.KeepAspectRatio, Qt.SmoothTransformation))
-
-            sizes = self.left_view["splitter"].sizes()  # 各ウィジェットのサイズを取得
-            img1 = QPixmap(self.left_view["current_image_path"])
-            self.left_view["image_label"].setPixmap(img1.scaled(self.left_view["image_label"].width(), sizes[0], Qt.KeepAspectRatio, Qt.SmoothTransformation))
-
-            sizes = self.right_view["splitter"].sizes()  # 各ウィジェットのサイズを取得
-            img1 = QPixmap(self.right_view["current_image_path"])
-            self.right_view["image_label"].setPixmap(img1.scaled(self.right_view["image_label"].width(), sizes[0], Qt.KeepAspectRatio, Qt.SmoothTransformation))
-
+            for view in self.views:
+                self.resize_image(view["set_id"])
 
     def resizeEvent(self, event):
         """ウィンドウリサイズ時にも画像を更新"""
