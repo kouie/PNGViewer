@@ -1,7 +1,7 @@
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                            QHBoxLayout, QLabel, QSplitter, QPushButton, QTextEdit,
                            QFileDialog, QTabWidget, QScrollArea, QFrame, QLineEdit)
-from PyQt5.QtCore import Qt, QSize, QRect, QEvent 
+from PyQt5.QtCore import Qt, QSize, QRect, QEvent, pyqtSignal 
 from PyQt5.QtGui import QPixmap, QDragEnterEvent, QDropEvent, QColor
 from PyQt5.QtGui import QFont, QTextCharFormat, QTextCursor, QFontMetrics
 import os
@@ -35,136 +35,162 @@ class MetadataLabel(QLabel):
 
         self.setText(f"<b>{self.label}:</b> {all_text}")
 
-class MyLabel(QLabel):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        # マウスイベントを追跡
-        self.setMouseTracking(True)
-    
-class ImageViewer(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("Image Metadata Viewer")
-        self.setMinimumSize(800, 600)
-        self.setGeometry(100,100, 800,900)
-        
-        self.central_widget = QWidget()
-        self.setCentralWidget(self.central_widget)
-        self.layout = QVBoxLayout(self.central_widget)
-        
-        self.tab_widget = QTabWidget()
-        self.layout.addWidget(self.tab_widget)
+class ImageView(QWidget):
+    image_loaded = pyqtSignal()
+    area_resized = pyqtSignal(int)
 
-        self.text_boxes = {}
+    def __init__(self, set_id, parent=None):
+        super().__init__(parent)        
 
-        self.single_view = QWidget()
-        self.setup_single_view()
-        self.tab_widget.addTab(self.single_view, "Single View")
+        self.container = QWidget()
+        layout = QVBoxLayout(self.container)
+        self.splitter = QSplitter(Qt.Vertical)
+        layout.addWidget(self.splitter)
 
-        self.compare_view = QWidget()
-        self.setup_compare_view()
-        self.tab_widget.addTab(self.compare_view, "Compare View")
-
-        self.tab_widget.currentChanged.connect(self.update_images)
-        self.setAcceptDrops(True) 
-
-        self.views = [self.main_view, self.left_view, self.right_view]
-
-        for view in self.views:
-            view["image_label"].installEventFilter(self)
-            view["container"].setAcceptDrops(True)
-            view["container"].installEventFilter(self)
-
-    def setup_single_view(self):
-        layout = QVBoxLayout(self.single_view)
-        self.main_view = self.create_image_view(0)
-        toolbar = self.setup_toolbar(0)
-        send_button = QPushButton("Send CP-view")
-        send_button.clicked.connect(self.send_to_cp)
-        toolbar.addWidget(send_button)
-        layout.insertLayout(0,toolbar)
-        self.main_view["toolbar"] = toolbar
-
-        layout.addWidget(self.main_view["container"])
-   
-
-    def setup_compare_view(self):
-        layout = QHBoxLayout(self.compare_view)
-        
-        self.left_view = self.create_image_view(1)
-        left_layout = QVBoxLayout()
-        left_layout.addWidget(self.left_view["container"])
-        toolbar = self.setup_toolbar(1)
-        left_layout.insertLayout(0,toolbar)
-
-        self.right_view = self.create_image_view(2)
-        right_layout = QVBoxLayout()
-        right_layout.addWidget(self.right_view["container"])
-        toolbar = self.setup_toolbar(2)
-        right_layout.insertLayout(0,toolbar)
-        
-        layout.addLayout(left_layout)
-        layout.addLayout(right_layout)
-        
-    def create_image_view(self, set_id):
-        container = QWidget()
-        layout = QVBoxLayout(container)
-#        toolbar = self.setup_toolbar1(set_id)
-#        layout.addLayout(toolbar)
-
-        splitter = QSplitter(Qt.Vertical)
-        layout.addWidget(splitter)
-        
-        # 画像表示用のスクロールエリア
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setFrameShape(QFrame.NoFrame)
-        
-        image_label = QLabel()
-        image_label.setAlignment(Qt.AlignCenter)
-        scroll_area.setWidget(image_label)
-        splitter.addWidget(scroll_area)
+
+        self.image_label = QLabel()
+        self.image_label.setAlignment(Qt.AlignCenter)
+        self.image_label.setText("ファイルをドラッグ&ドロップするか\n左上のボタンをクリックしてフォルダを指定してください")
+        scroll_area.setWidget(self.image_label)
+        self.splitter.addWidget(scroll_area)
 
         # メタデータ表示用のスクロールエリア
         metadata_scroll = QScrollArea()
         metadata_scroll.setWidgetResizable(True)
-        metadata_widget = QWidget()
-        metadata_layout = QVBoxLayout(metadata_widget)
-        metadata_scroll.setWidget(metadata_widget)
-        splitter.addWidget(metadata_scroll)
+        self.metadata_widget = QWidget()
+        self.metadata_layout = QVBoxLayout(self.metadata_widget)
+        metadata_scroll.setWidget(self.metadata_widget)
+        self.splitter.addWidget(metadata_scroll)
         
         # スプリッターの初期サイズ設定
-        splitter.setSizes([400, 500])
-        splitter.splitterMoved.connect(self.update_images)
+        self.splitter.setSizes([400, 500])
+        self.splitter.splitterMoved.connect(self.on_area_resized)
 
-        return {"container": container, 
-                "image_label": image_label,
-                "metadata_widget": metadata_widget,
-                "metadata_layout": metadata_layout,
-                "splitter": splitter,
-                "current_folder": "",
-                "current_image_path": "",
-                "set_id": set_id}
+        self.toolbar = self.setup_toolbar()
+        layout.insertLayout(0,self.toolbar)
+
+        self.image_label.installEventFilter(self)
+        self.container.setAcceptDrops(True)
+        self.container.installEventFilter(self)
         
-    def setup_toolbar(self, set_id):
+        self.metadata = {}
+        self.current_image_path = ""
+        self.current_folder = ""
+        self.set_id = set_id
+
+    def setup_toolbar(self):
         toolbar = QHBoxLayout()
         
         open_button = QPushButton("Open Folder")
-        open_button.clicked.connect( partial(self.open_folder, set_id) )
+        open_button.clicked.connect(self.open_folder)
         toolbar.addWidget(open_button)
         
         copy_seed_button = QPushButton("Copy Seed")
-        copy_seed_button.clicked.connect( partial(self.copy_seed, set_id) )
+        copy_seed_button.clicked.connect(self.copy_seed)
         toolbar.addWidget(copy_seed_button)
 
         # テキスト入力ボックスを追加
-        text_box = QLineEdit(self)
-        toolbar.addWidget(text_box)
-        self.text_boxes[f"{set_id}"] = text_box
+        f_label = QLabel(" Filter:")
+        self.text_box = QLineEdit()
+        self.text_box.setPlaceholderText(" prompt...")
+        toolbar.addWidget(f_label)
+        toolbar.addWidget(self.text_box)
 
         toolbar.addStretch()
  
-        return toolbar
+        return toolbar        
+
+    def on_area_resized(self):
+        self.area_resized.emit(self.set_id)
+
+    def open_folder(self):
+        if self.current_image_path == "":
+            folder = QFileDialog.getExistingDirectory(self, "Select Folder")
+        else:
+            folder = QFileDialog.getExistingDirectory(self, "Select Folder", self.current_folder)
+
+        if folder:
+            self.current_folder = folder
+            self.load_first_image()
+
+    def load_first_image(self):
+        current_folder = self.current_folder
+        image_files = [f for f in os.listdir(current_folder) 
+                      if f.lower().endswith(('.png'))]
+        if image_files:
+            self.image_label.setText(image_files[0])
+            image_file = os.path.join(current_folder, image_files[0])
+            self.load_image(image_file)
+        else:
+            self.image_label.setText("no png files found")
+            self.current_image_path = ""
+            while self.metadata_layout.count():
+                child = self.metadata_layout.takeAt(0)
+                if child.widget():
+                    child.widget().deleteLater()
+
+    def load_image(self, image_path):
+        pixmap = QPixmap(image_path)
+        if not pixmap.isNull():
+            scaled_pixmap = self.scale_pixmap(pixmap, self.image_label.size())
+            self.image_label.setPixmap(scaled_pixmap)
+            self.current_image_path = image_path
+                
+            # メタデータを読み込んで表示
+            metadata = self.extract_png_metadata(image_path)
+            self.display_metadata(metadata)
+            self.metadata_layout.insertWidget(0, MetadataLabel("File",f"{image_path}"))
+            self.metadata = metadata
+
+            self.image_loaded.emit()
+ 
+    def scale_pixmap(self, pixmap, size):
+        return pixmap.scaled(size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+
+    def change_image(self, event):
+        if self.current_folder:
+            image_files = sorted([f for f in os.listdir(self.current_folder) 
+                            if f.lower().endswith(('.png'))])
+            try:
+                current_index = image_files.index(os.path.basename(self.current_image_path))
+            except:
+                return
+            
+            new_index = ""
+            for idx in range(len(image_files)):
+                
+                if event.angleDelta().y() > 0:
+                    next_index = (current_index - 1) % len(image_files)
+                else:
+                    next_index = (current_index + 1) % len(image_files)
+
+                next_file = os.path.join(self.current_folder, image_files[next_index])
+                metadata = self.extract_png_metadata(next_file)
+
+                if metadata:
+                    filter = self.text_box.text()
+                    prompts = metadata["Prompt"]
+                    if filter in prompts:
+                        new_index = next_index
+                        break
+
+                if event.angleDelta().y() > 0:
+                    current_index = (current_index - 1) % len(image_files)
+                else:
+                    current_index = (current_index + 1) % len(image_files)
+
+            if new_index == "":
+                self.image_label.setText("no png files found ")
+                while self.metadata_layout.count():
+                    child = self.metadata_layout.takeAt(0)
+                    if child.widget():
+                        child.widget().deleteLater()
+                return
+            
+            self.load_image(os.path.join(self.current_folder, image_files[new_index]))
 
     def parse_metadata(self, text):
         metadata = {}
@@ -192,15 +218,7 @@ class ImageViewer(QMainWindow):
             # Steps以降を処理
             remaining_text = remaining_text[steps_index:]
 
-            # パラメータを正規表現で抽出
-#            pattern = r"([^:,]+):\s*([^,]+?)(?=(?:[^:,]+:|$))"
-#            matches = re.finditer(pattern, remaining_text)
-            
-#            for match in matches:
-#                key = match.group(1).strip()
-#                value = match.group(2).strip()
-#                metadata[key] = value
-
+            # パラメータを抽出
             params = remaining_text.split(",")
             for param in params:
                 key, value = param.split(":",1)
@@ -223,11 +241,11 @@ class ImageViewer(QMainWindow):
             print(f"Error extracting metadata: {e}")
             return {}
             
-    def display_metadata(self, metadata, layout, clear=True):
+    def display_metadata(self, metadata, clear=True):
         if clear:
             # 既存のウィジェットをクリア
-            while layout.count():
-                child = layout.takeAt(0)
+            while self.metadata_layout.count():
+                child = self.metadata_layout.takeAt(0)
                 if child.widget():
                     child.widget().deleteLater()
 
@@ -237,14 +255,115 @@ class ImageViewer(QMainWindow):
                    "Denoising strength", "Clip skip"]:
             if key in metadata:
                 label = MetadataLabel(key, metadata[key])
-                layout.addWidget(label)
+                self.metadata_layout.addWidget(label)
         
-        layout.addStretch()
+        self.metadata_layout.addStretch()
+
+
+    def update_image(self, image_path):
+        self.image_data.full_path = image_path
+        self.image_data.filename = os.path.basename(image_path)
+        self.image_data.image = QPixmap(image_path)
+        self.display_image()
+
+    def display_image(self):
+        self.label.setPixmap(self.image_data.image)
+
+    def copy_seed(self):
+        # 現在のタブに応じてSeedをクリップボードにコピー
+        for i in range(self.metadata_layout.count()):
+            item = self.metadata_layout.itemAt(i)
+            if item and item.widget():
+                widget = item.widget()
+                if isinstance(widget, MetadataLabel) and widget.label == "Seed":
+                    QApplication.clipboard().setText(widget.value)
+                    break
+
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.Wheel:
+            # ホイールイベント処理
+            if watched == self.image_label:
+                self.change_image(event)
+                return True
+
+        elif event.type() == QEvent.DragEnter:
+            # ドラッグされたデータを受け入れるかどうかを判断
+            if event.mimeData().hasUrls():
+                event.acceptProposedAction()
+            return True
+            
+        elif event.type() == QEvent.DragMove:
+            # 必要に応じてドラッグ中の位置をチェック
+            event.acceptProposedAction()
+            return True
         
-    def compare_metadata(self, left_metadata, right_metadata):
+        elif event.type() == QEvent.Drop:
+            if watched == self.container:
+                self.dropped_image_c(event)
+                return True
+
+            return True
+
+        return super().eventFilter(watched, event)
+    
+    def dropped_image_c(self, event):
+        files = [u.toLocalFile() for u in event.mimeData().urls()]
+        if files:
+            if os.path.isfile(files[0]) and files[0].lower().endswith('.png'):
+                self.load_image(files[0])
+                self.current_folder = os.path.dirname(files[0])
+
+
+class ImageViewer(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Image Metadata Viewer")
+        self.setMinimumSize(800, 600)
+        self.setGeometry(100,100, 800,900)
+        
+        self.central_widget = QWidget()
+        self.setCentralWidget(self.central_widget)
+        self.layout = QVBoxLayout(self.central_widget)
+        
+        self.tab_widget = QTabWidget()
+        self.layout.addWidget(self.tab_widget)
+
+        self.s_view = QWidget()
+        layout = QVBoxLayout(self.s_view)
+        self.m_view = ImageView(0)
+        send_button = QPushButton("Send Compare")
+        self.m_view.toolbar.addWidget(send_button)      
+        send_button.clicked.connect(self.send_to_cp_c)
+        layout.addWidget(self.m_view.container)
+        self.tab_widget.addTab(self.s_view, "Single View")
+
+        self.c_view = QWidget()
+        layout = QHBoxLayout(self.c_view)
+        self.l_view = ImageView(1)
+        self.r_view = ImageView(2)
+        layout.addWidget(self.l_view.container)
+        layout.addWidget(self.r_view.container)
+        self.l_view.image_loaded.connect(self.compare_metadata_c)
+        self.r_view.image_loaded.connect(self.compare_metadata_c)
+
+        self.tab_widget.addTab(self.c_view, "Compare View")
+        self.tab_widget.currentChanged.connect(self.update_images_c)
+
+        self.views_c = [self.m_view, self.l_view, self.r_view]
+
+        for view in self.views_c:
+            view.area_resized.connect(self.update_images_c)
+
+    def compare_metadata_c(self):
+        if self.l_view.current_image_path and self.r_view.current_image_path:
+            left_metadata = self.l_view.metadata
+            right_metadata = self.r_view.metadata
+        else:
+            return
+
         # 両方のメタデータウィジェットをクリア
-        left_layout = self.left_view["metadata_layout"]
-        right_layout = self.right_view["metadata_layout"]
+        left_layout = self.l_view.metadata_layout
+        right_layout = self.r_view.metadata_layout
         
         while left_layout.count():
             child = left_layout.takeAt(0)
@@ -304,221 +423,59 @@ class ImageViewer(QMainWindow):
         
         left_layout.addStretch()
         right_layout.addStretch()
-        
-    def load_image(self, image_path, target=None):
-        pixmap = QPixmap(image_path)
-        if not pixmap.isNull():
-#            if self.tab_widget.currentIndex() == 0:  # Single view
-            if target == self.main_view:  # Single view
-                scaled_pixmap = self.scale_pixmap(pixmap, target["image_label"].size())
-                target["image_label"].setPixmap(scaled_pixmap)
-                target["current_image_path"] = image_path
-                
-                # メタデータを読み込んで表示
-                metadata = self.extract_png_metadata(image_path)
-                self.display_metadata(metadata, target["metadata_layout"])
-                target["metadata_layout"].insertWidget(0, MetadataLabel("File",f"{image_path}"))
 
-            else:  # Compare view
-                scaled_pixmap = self.scale_pixmap(pixmap, target["image_label"].size())
-                target["image_label"].setPixmap(scaled_pixmap)
-                target["current_image_path"] = image_path
-                
-                # メタデータを読み込む
-                metadata = self.extract_png_metadata(image_path)
-                self.display_metadata(metadata, target["metadata_layout"])
-                target["current_image_path"] = image_path
-                target["metadata_layout"].insertWidget(0, MetadataLabel("File",f"{image_path}"))
-
-                # 両方の画像が読み込まれている場合は比較表示
-                if (self.left_view["current_image_path"] and self.right_view["current_image_path"]):
-                    left_metadata = self.extract_png_metadata(self.left_view.get("current_image_path", ""))
-                    right_metadata = self.extract_png_metadata(self.right_view.get("current_image_path", ""))
-
-                    self.compare_metadata(left_metadata, right_metadata)
-                    left_image = self.left_view["current_image_path"]
-                    right_image = self.right_view["current_image_path"]
-                    self.left_view["metadata_layout"].insertWidget(0, MetadataLabel("File",f"{left_image}"))
-                    self.right_view["metadata_layout"].insertWidget(0, MetadataLabel("File",f"{right_image}"))
-
+        left_layout.insertWidget(0, MetadataLabel("File",f"{self.l_view.current_image_path}"))
+        right_layout.insertWidget(0, MetadataLabel("File",f"{self.r_view.current_image_path}"))        
 
     def scale_pixmap(self, pixmap, size):
         return pixmap.scaled(size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             
-    def open_folder(self, set_id):
-        if self.views[set_id]["current_image_path"] == "":
-            folder = QFileDialog.getExistingDirectory(self, "Select Folder")
-        else:
-            folder = QFileDialog.getExistingDirectory(self, "Select Folder", self.views[set_id]["current_folder"])
-
-        if folder:
-            self.views[set_id]["current_folder"] = folder
-            self.load_first_image(set_id)
-            
-    def load_first_image(self, set_id):
-        view = self.views[set_id]
-        current_folder = view["current_folder"]
-        image_files = [f for f in os.listdir(current_folder) 
-                      if f.lower().endswith(('.png'))]
-        if image_files:
-            self.load_image(os.path.join(current_folder, image_files[0]), view)
-
-        else:
-            view["image_label"].setText("no png files found")
-            self.views[set_id]["current_image_path"] = ""
-            while view["metadata_layout"].count():
-                child = view["metadata_layout"].takeAt(0)
-                if child.widget():
-                    child.widget().deleteLater()
-
-    def copy_seed(self, set_id):
-        # 現在のタブに応じてSeedをクリップボードにコピー
-        view = self.views[set_id].copy()
-        for i in range(view["metadata_layout"].count()):
-            item = view["metadata_layout"].itemAt(i)
-            if item and item.widget():
-                widget = item.widget()
-                if isinstance(widget, MetadataLabel) and widget.label == "Seed":
-                    QApplication.clipboard().setText(widget.value)
-                    break
-
-    def change_image_wo_filter(self, event, cview):
-        if cview["current_folder"]:
-            image_files = sorted([f for f in os.listdir(cview["current_folder"]) 
-                            if f.lower().endswith(('.png'))])
-            try:
-                current_index = image_files.index(os.path.basename(cview["current_image_path"]))
-            except:
-                return
-            
-            if event.angleDelta().y() > 0:
-                new_index = (current_index - 1) % len(image_files)
-            else:
-                new_index = (current_index + 1) % len(image_files)
-            
-            self.load_image(os.path.join(cview["current_folder"], image_files[new_index]), cview)
-
-    def change_image(self, event, cview):
-        if cview["current_folder"]:
-            image_files = sorted([f for f in os.listdir(cview["current_folder"]) 
-                            if f.lower().endswith(('.png'))])
-            try:
-                current_index = image_files.index(os.path.basename(cview["current_image_path"]))
-            except:
-                return
-            
-            new_index = ""
-            for idx in range(len(image_files)):
-                
-                if event.angleDelta().y() > 0:
-                    next_index = (current_index - 1) % len(image_files)
-                else:
-                    next_index = (current_index + 1) % len(image_files)
-
-                next_file = os.path.join(cview["current_folder"], image_files[next_index])
-                metadata = self.extract_png_metadata(next_file)
-
-                if metadata:
-                    set_id = cview["set_id"]
-                    filter = self.text_boxes[f"{set_id}"].text()
-                    prompts = metadata["Prompt"]
-                    if filter in prompts:
-                        new_index = next_index
-                        break
-
-                if event.angleDelta().y() > 0:
-                    current_index = (current_index - 1) % len(image_files)
-                else:
-                    current_index = (current_index + 1) % len(image_files)
-
-            if new_index == "":
-                cview["image_label"].setText("no png files found ")
-                while cview["metadata_layout"].count():
-                    child = cview["metadata_layout"].takeAt(0)
-                    if child.widget():
-                        child.widget().deleteLater()
-                return
-            
-            self.load_image(os.path.join(cview["current_folder"], image_files[new_index]), cview)
+    def send_to_cp_c(self):
+        self.l_view.current_folder = self.m_view.current_folder
+        self.l_view.current_image_path = self.m_view.current_image_path
+        self.l_view.load_image(self.l_view.current_image_path)
+        self.resize_image_c(1)
 
 
-    def send_to_cp(self):
-        self.left_view["current_folder"] = self.main_view["current_folder"]
-        self.left_view["current_image_path"] = self.main_view["current_image_path"]
-        self.load_image(self.left_view["current_image_path"], self.left_view)
-        self.resize_image(1)
-
-    def eventFilter(self, watched, event):
-        if event.type() == QEvent.Wheel:
-            # ホイールイベント処理
-            for view in self.views:
-                if watched == view["image_label"]:
-                    self.change_image(event, view)
-                    return True
-
-        elif event.type() == QEvent.DragEnter:
-            # ドラッグされたデータを受け入れるかどうかを判断
-            if event.mimeData().hasUrls():
-                event.acceptProposedAction()
-            return True
-            
-        elif event.type() == QEvent.DragMove:
-            # 必要に応じてドラッグ中の位置をチェック
-            event.acceptProposedAction()
-            return True
-        
-        elif event.type() == QEvent.Drop:
-            for view in self.views:
-                if watched == view["container"]:
-                    self.dropped_image(event, view)
-                    return True
-            return True
-
-        return super().eventFilter(watched, event)
-    
-#    def dragEnterEvent(self, event: QDragEnterEvent):
-#        if event.mimeData().hasUrls():
-#            event.acceptProposedAction()
-            
-    def dropped_image(self, event, view):
+    def dropped_image_c(self, event, view):
         files = [u.toLocalFile() for u in event.mimeData().urls()]
         if files:
             if os.path.isfile(files[0]) and files[0].lower().endswith('.png'):
-                self.load_image(files[0], view)
-                view["current_folder"] = os.path.dirname(files[0])
+                view.load_image(files[0])
+                view.current_folder = os.path.dirname(files[0])
 
-    def resize_image(self, view_id):
-        view = self.views[view_id]
-        if view["current_image_path"] != "":
-            sizes = view["splitter"].sizes()  # 各ウィジェットのサイズを取得
-            img = QPixmap(view["current_image_path"])
-            view["image_label"].setPixmap(img.scaled(view["image_label"].width(), sizes[0], Qt.KeepAspectRatio, Qt.SmoothTransformation))
+    def resize_image_c(self, view_id):
+        view = self.views_c[view_id]
+        if view.current_image_path != "":
+            sizes = view.splitter.sizes()  # 各ウィジェットのサイズを取得
+            img = QPixmap(view.current_image_path)
+            view.image_label.setPixmap(img.scaled(view.image_label.width(), sizes[0], Qt.KeepAspectRatio, Qt.SmoothTransformation))
 
-    def update_images(self):
+    def update_images_c(self, set_id):
         """スプリッターのサイズに応じて画像をリサイズ"""
         sender = self.sender()
-        if sender == self.left_view["splitter"]:
-            self.resize_image(1)
+        if set_id == 1:
+            self.resize_image_c(1)
 
-            sizes = self.left_view["splitter"].sizes()  # 各ウィジェットのサイズを取得
-            if self.right_view["current_image_path"]:
-                img2 = QPixmap(self.right_view["current_image_path"])
-                self.right_view["image_label"].setPixmap(img2.scaled(self.left_view["image_label"].width(), sizes[0], Qt.KeepAspectRatio, Qt.SmoothTransformation))
-            self.right_view["splitter"].setSizes(sizes)
+            sizes = self.l_view.splitter.sizes()  # 各ウィジェットのサイズを取得
+            if self.r_view.current_image_path:
+                img2 = QPixmap(self.r_view.current_image_path)
+                self.r_view.image_label.setPixmap(img2.scaled(self.l_view.image_label.width(), sizes[0], Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            self.r_view.splitter.setSizes(sizes)
 
-        elif sender == self.right_view["splitter"]:
-            self.resize_image(2)
+        elif set_id == 2:
+            self.resize_image_c(2)
 
-        elif sender == self.main_view["splitter"]:
-            self.resize_image(0)
+        elif set_id == 0:
+            self.resize_image_c(0)
 
         else:
-            for view in self.views:
-                self.resize_image(view["set_id"])
+            for view in self.views_c:
+                self.resize_image_c(view.set_id)
 
     def resizeEvent(self, event):
         """ウィンドウリサイズ時にも画像を更新"""
-        self.update_images()
+        self.update_images_c(3)
         super().resizeEvent(event)
 
 if __name__ == '__main__':
