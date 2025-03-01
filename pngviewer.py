@@ -1,6 +1,7 @@
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                            QHBoxLayout, QLabel, QSplitter, QPushButton, QTextEdit,
-                           QFileDialog, QTabWidget, QScrollArea, QFrame, QLineEdit)
+                           QFileDialog, QTabWidget, QScrollArea, QFrame, QLineEdit,
+                           QDialog, QCheckBox, QMenu, QAction)
 from PyQt5.QtCore import Qt, QSize, QRect, QEvent, pyqtSignal, QMimeData, QUrl,QPoint 
 from PyQt5.QtGui import QPixmap, QDragEnterEvent, QDropEvent, QColor, QDrag
 from PyQt5.QtGui import QFont, QTextCharFormat, QTextCursor, QFontMetrics
@@ -11,6 +12,8 @@ from PIL.PngImagePlugin import PngImageFile
 from functools import partial
 
 class MetadataLabel(QLabel):
+    r_button_clicked = pyqtSignal()
+
     def __init__(self, label="", value="", parent=None):
         super().__init__(parent)
         self.label = label
@@ -38,6 +41,66 @@ class MetadataLabel(QLabel):
         all_text = all_text.replace("\n", "<br>")
         self.setText(f"<b>{self.label}:</b> {all_text}")
 
+    def contextMenuEvent(self, event):
+        # デフォルトのコンテキストメニューを作成
+        menu = QMenu(self)
+        
+        # デフォルトのアクションを追加
+        copyAction = menu.addAction("コピー")
+        copyAction.triggered.connect(self.copy)
+        
+        selectAllAction = menu.addAction("すべて選択")
+        selectAllAction.triggered.connect(self.selectAll)
+        
+        # セパレーターを追加
+        menu.addSeparator()
+        
+        # カスタムアクションを追加
+        customAction = menu.addAction("項目を選択...")
+        customAction.triggered.connect(self.on_r_mouse_clicked)
+        
+        # メニューを表示
+        menu.exec_(event.globalPos())
+
+    def on_r_mouse_clicked(self):
+        self.r_button_clicked.emit()
+
+    def copy(self):
+        # テキストをクリップボードにコピー
+        from PyQt5.QtGui import QGuiApplication
+        clipboard = QGuiApplication.clipboard()
+        clipboard.setText(self.selectedText())
+    
+    def selectAll(self):
+        # 実装が必要な場合
+        pass
+
+class CheckableListDialog(QDialog):
+    def __init__(self, items, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("項目選択")
+        self.resize(150, 400)
+        self.layout = QVBoxLayout(self)
+        
+        # チェックボックス付きのリスト
+        self.checkboxes = []
+        for item in items:
+            checkbox = QCheckBox(item)
+            self.checkboxes.append(checkbox)
+            self.layout.addWidget(checkbox)
+        
+        # OKボタン
+        self.okButton = QPushButton("OK")
+        self.okButton.clicked.connect(self.accept)
+        self.layout.addWidget(self.okButton)
+    
+    def getSelectedItems(self):
+        selected = []
+        for checkbox in self.checkboxes:
+            if checkbox.isChecked():
+                selected.append(checkbox.text())
+        return selected
+    
 class DraggableImageLabel(QLabel):
     def __init__(self, image_path, parent=None):
         super().__init__(parent)
@@ -84,6 +147,7 @@ class ImageView(QWidget):
     image_loaded = pyqtSignal()
     area_resized = pyqtSignal(int)
     mouse_clicked = pyqtSignal(QPoint)
+    metaarea_changed = pyqtSignal()
 
     def __init__(self, set_id, parent=None):
         super().__init__(parent)        
@@ -93,6 +157,9 @@ class ImageView(QWidget):
         self.current_folder = ""
         self.current_index = 0
         self.set_id = set_id
+        self.meta_tags = ["Prompt", "Negative prompt", "Steps", "Sampler", "CFG scale", 
+                   "Seed", "Size", "Model", "VAE", 
+                   "Denoising strength", "Variation seed", "Variation seed strength", "Clip skip"]
 
         self.container = QWidget()
         layout = QVBoxLayout(self.container)
@@ -117,6 +184,8 @@ class ImageView(QWidget):
         self.metadata_widget = QWidget()
         self.metadata_layout = QVBoxLayout(self.metadata_widget)
         metadata_scroll.setWidget(self.metadata_widget)
+        metadata_scroll.setContextMenuPolicy(Qt.CustomContextMenu)
+        metadata_scroll.customContextMenuRequested.connect(self.showContextMenu)
         self.splitter.addWidget(metadata_scroll)
         
         # スプリッターの初期サイズ設定
@@ -156,6 +225,27 @@ class ImageView(QWidget):
         toolbar.addStretch()
  
         return toolbar        
+
+    def showContextMenu(self, position):
+        menu = QMenu()
+        selectAction = QAction("項目を選択...", self)
+        selectAction.triggered.connect(self.selectItems)
+        menu.addAction(selectAction)
+        menu.exec_(self.metadata_widget.mapToGlobal(position))
+
+    def selectItems(self):
+        meta_all = self.metadata.keys()
+        dialog = CheckableListDialog(meta_all, self)
+        
+        # 既に選択済みの項目にチェックを入れる
+        for i, checkbox in enumerate(dialog.checkboxes):
+            if checkbox.text() in self.meta_tags:
+                checkbox.setChecked(True)
+        
+        if dialog.exec_():
+            self.meta_tags = dialog.getSelectedItems()
+            self.display_metadata(self.metadata)    
+            self.image_loaded.emit()
 
     def on_area_resized(self):
         self.area_resized.emit(self.set_id)
@@ -360,12 +450,11 @@ class ImageView(QWidget):
                     child.widget().deleteLater()
 
         # メタデータを表示
-        for key in ["Prompt", "Negative prompt", "Steps", "Sampler", "CFG scale", 
-                   "Seed", "Size", "Model", "VAE", 
-                   "Denoising strength", "Clip skip"]:
+        for key in self.meta_tags:
             if key in metadata:
                 label = MetadataLabel(key, metadata[key])
                 self.metadata_layout.addWidget(label)
+                label.r_button_clicked.connect(self.selectItems)
 
         self.metadata_layout.insertWidget(0, MetadataLabel("File",f"{self.current_image_path}"))
         self.metadata_layout.addStretch()
@@ -467,10 +556,16 @@ class ImageViewer(QMainWindow):
         self.l_view.image_loaded.connect(self.compare_metadata)
         self.r_view.image_loaded.connect(self.compare_metadata)
 
+        self.l_view.metaarea_changed.connect(self.compare_metadata)
+        self.r_view.metaarea_changed.connect(self.compare_metadata)
+
         self.tab_widget.addTab(self.c_view, "比較")
         self.tab_widget.currentChanged.connect(self.on_tab_changed)
 
         self.views = [self.m_view, self.l_view, self.r_view]
+        self.cp_tags = ["Prompt", "Negative prompt", "Steps", "Sampler", "CFG scale", 
+                   "Seed", "Size", "Model", "VAE", 
+                   "Denoising strength", "Variation seed", "Variation seed strength", "Clip skip"]
 
         for view in self.views:
             view.area_resized.connect(self.update_images)
@@ -506,7 +601,11 @@ class ImageViewer(QMainWindow):
             if child.widget():
                 child.widget().deleteLater()
 
-        for key in ["Prompt", "Negative prompt"]:
+        l_enable_tags = self.l_view.meta_tags
+        r_enable_tags = self.r_view.meta_tags
+        
+        for key in self.cp_tags[0:2]:
+#            ["Prompt", "Negative prompt"]:
             left_value = left_metadata.get(key, "")
             right_value = right_metadata.get(key, "")
 
@@ -520,37 +619,46 @@ class ImageViewer(QMainWindow):
             only_in_right = right_set - left_set
 
             # 左側のメタデータを表示
-            left_label = MetadataLabel(key, left_value)
-            left_layout.addWidget(left_label)
 
-            left_label.apply_highlight(only_in_left, "yellow")
+            if key in l_enable_tags:
+                left_label = MetadataLabel(key, left_value)
+                left_label.r_button_clicked.connect(self.l_view.selectItems)
+                left_layout.addWidget(left_label)
+                left_label.apply_highlight(only_in_left, "yellow")
             
             # 右側のメタデータを表示
-            right_label = MetadataLabel(key, right_value)
-            right_layout.addWidget(right_label)
-
-            right_label.apply_highlight(only_in_right, "cyan")
+            if key in r_enable_tags:
+                right_label = MetadataLabel(key, right_value)
+                right_label.r_button_clicked.connect(self.r_view.selectItems)
+                right_layout.addWidget(right_label)
+                right_label.apply_highlight(only_in_right, "cyan")
 
 
         # メタデータを比較しながら表示
-        for key in ["Steps", "Sampler", "CFG scale", 
-                   "Seed", "Size", "Model", "VAE", 
-                   "Denoising strength", "Clip skip", "Version"]:
+        for key in self.cp_tags[2:]:
             left_value = left_metadata.get(key, "")
             right_value = right_metadata.get(key, "")
             
             # 左側のメタデータを表示
-            left_label = MetadataLabel(key, left_value)
-            left_layout.addWidget(left_label)
+            if key in l_enable_tags:
+                left_label = MetadataLabel(key, left_value)
+                left_label.r_button_clicked.connect(self.l_view.selectItems)
+                if left_value:
+                    left_layout.addWidget(left_label)
             
             # 右側のメタデータを表示
-            right_label = MetadataLabel(key, right_value)
-            right_layout.addWidget(right_label)
+            if key in r_enable_tags:
+                right_label = MetadataLabel(key, right_value)
+                right_label.r_button_clicked.connect(self.r_view.selectItems)
+                if right_value:
+                    right_layout.addWidget(right_label)
             
             # 値が異なる場合はハイライト
             if left_value != right_value:
-                left_label.update_text(highlight=True)
-                right_label.update_text(highlight=True)
+                if key in l_enable_tags:
+                    left_label.update_text(highlight=True)
+                if key in r_enable_tags:
+                    right_label.update_text(highlight=True)
         
         left_layout.addStretch()
         right_layout.addStretch()
