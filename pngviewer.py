@@ -1,12 +1,13 @@
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                            QHBoxLayout, QLabel, QSplitter, QPushButton, QTextEdit,
                            QFileDialog, QTabWidget, QScrollArea, QFrame, QLineEdit,
-                           QDialog, QCheckBox, QMenu, QAction)
+                           QDialog, QCheckBox, QMenu, QAction, QWidgetAction, QMessageBox)
 from PyQt5.QtCore import Qt, QSize, QRect, QEvent, pyqtSignal, QMimeData, QUrl,QPoint 
 from PyQt5.QtGui import QPixmap, QDragEnterEvent, QDropEvent, QColor, QDrag
-from PyQt5.QtGui import QFont, QTextCharFormat, QTextCursor, QFontMetrics
+from PyQt5.QtGui import QFont, QTextCharFormat, QTextCursor, QFontMetrics, QIcon
 import os
 import re
+from pathlib import Path
 from PIL import Image
 from PIL.PngImagePlugin import PngImageFile
 from functools import partial
@@ -101,6 +102,148 @@ class CheckableListDialog(QDialog):
                 selected.append(checkbox.text())
         return selected
     
+class OpenNavigationButtan(QPushButton):
+    new_folder = pyqtSignal()
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.current_folder = ""
+        self.pinned_folders = []
+        self.folder_history = []
+        self.history_index = -1
+
+        self.clicked.connect(self.open_folder)
+        self.customContextMenuRequested.connect(self.show_context_menu)        
+
+    def create_pinned_folder_widget(self, folder):
+        """ピン留めフォルダ用のウィジェットを作成（チェックボックス付き）"""
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(5, 0, 5, 0)
+    
+        # スペースを追加してインデント効果を作る
+        indent_label = QLabel("　　")  # 全角スペースを使用
+    
+        # フォルダ名だけを表示
+        folder_name = os.path.basename(folder)
+        if not folder_name:  # フォルダがルートの場合
+            folder_name = folder
+        
+        label = QLabel(folder_name)
+        label.setToolTip(folder)  # フルパスをツールチップに表示
+    
+        # 削除ボタン
+        delete_button = QPushButton()
+        delete_button.setIcon(QIcon.fromTheme("edit-delete"))
+        delete_button.setIconSize(QSize(16, 16))
+        delete_button.setFixedSize(20, 20)
+        delete_button.setToolTip("ピン留め解除")
+        delete_button.clicked.connect(lambda: self.unpin_folder(folder))
+    
+        layout.addWidget(indent_label)
+        layout.addWidget(label)
+        layout.addStretch()
+        layout.addWidget(delete_button)
+    
+        # ウィジェット全体をクリック可能にする設定
+        widget.setMouseTracking(True)
+        widget.setCursor(Qt.PointingHandCursor)  # マウスカーソルを手の形に
+    
+        return widget
+    
+    def handle_pinned_folder_click(self, event, folder):
+        """ピン留めフォルダウィジェットのクリックを処理"""
+        # 削除ボタンのクリック以外の場合はフォルダに移動
+        if event.button() == Qt.LeftButton:
+            # クリックがウィジェット内の削除ボタンでなければフォルダを開く
+            child_widget = self.childAt(event.pos())
+            if not isinstance(child_widget, QPushButton):
+                self.navigate_to_folder(folder)
+
+    def navigate_to_folder(self, folder):
+        """指定されたフォルダに移動する"""
+        if not os.path.exists(folder):
+            QMessageBox.warning(self, "エラー", f"フォルダが見つかりません: {folder}")
+            return
+            
+        # 履歴に追加
+        if self.current_folder:
+            # 現在位置より先の履歴を削除
+            if self.history_index < len(self.folder_history) - 1:
+                self.folder_history = self.folder_history[:self.history_index + 1]
+            
+            self.folder_history.append(self.current_folder)
+            self.history_index = len(self.folder_history) - 1
+            
+        self.current_folder = folder
+        self.new_folder.emit()
+
+    def unpin_folder(self, folder):
+        """指定されたフォルダのピン留めを解除"""
+        if folder in self.pinned_folders:
+            self.pinned_folders.remove(folder)
+
+    def show_context_menu(self, pos):
+        menu = QMenu(self)
+        menu.setMinimumWidth(100)
+        m_next = menu.addAction("次のフォルダ")
+        m_next.triggered.connect( partial(self.move_folder, 1) )
+        m_prev = menu.addAction("前のフォルダ")
+        m_prev.triggered.connect( partial(self.move_folder, -1) )
+        pinning = menu.addAction("ピン留めする")  
+        pinning.triggered.connect(self.pin_current_folder)
+
+        if self.pinned_folders:
+            menu.addSeparator()       
+
+            # ピン留めフォルダをメニューに追加
+            for folder in self.pinned_folders:
+                widget = self.create_pinned_folder_widget(folder)
+                widget_action = QWidgetAction(menu)
+                widget_action.setDefaultWidget(widget)
+            
+                # クリック可能なウィジェットを作成
+                widget.mouseReleaseEvent = lambda event, f=folder: self.handle_pinned_folder_click(event, f)
+            
+                menu.addAction(widget_action)
+        
+        menu.exec_(self.mapToGlobal(pos))
+
+    def pin_current_folder(self):
+        """現在のフォルダをピン留め"""
+        if not self.current_folder:
+            return
+            
+        # 既にピン留めされていないか確認
+        if self.current_folder not in self.pinned_folders:
+            self.pinned_folders.append(self.current_folder)
+#            print(f"フォルダをピン留めしました: {self.current_folder}")
+
+    def open_folder(self):
+        if self.current_folder == "":
+            folder = QFileDialog.getExistingDirectory(self, "Select Folder")
+        else:
+            folder = QFileDialog.getExistingDirectory(self, "Select Folder", self.current_folder)
+
+        if folder:
+            self.current_folder = folder
+            self.new_folder.emit()
+
+    def move_folder(self, direction):
+        parent_folder = Path(self.current_folder).parent
+        folders = [f for f in os.listdir(parent_folder) if os.path.isdir(parent_folder / f)]
+        if len(folders) == 0:
+            return
+
+        foldername = Path(self.current_folder).name
+        current_index = folders.index(foldername)
+        
+        new_index = (current_index + direction) % len(folders)
+        new_folder_name = parent_folder / folders[new_index]
+        self.current_folder = str(new_folder_name)
+        self.new_folder.emit()
+            
 class DraggableImageLabel(QLabel):
     def __init__(self, image_path, parent=None):
         super().__init__(parent)
@@ -199,13 +342,15 @@ class ImageView(QWidget):
         self.container.setAcceptDrops(True)
         self.container.installEventFilter(self)
 
+        self.open_button.new_folder.connect(self.on_new_folder)
+
     def setup_toolbar(self):
         toolbar = QHBoxLayout()
         
-        open_button = QPushButton("Open")
-        open_button.clicked.connect(self.open_folder)
-        open_button.setFixedWidth(40)
-        toolbar.addWidget(open_button)
+        self.open_button = OpenNavigationButtan("Open")
+#        self.open_button.clicked.connect(self.open_folder)
+        self.open_button.setFixedWidth(40)
+        toolbar.addWidget(self.open_button)
         
         copy_seed_button = QPushButton("Copy")
         copy_seed_button.clicked.connect(self.copy_seed)
@@ -250,6 +395,12 @@ class ImageView(QWidget):
     def on_area_resized(self):
         self.area_resized.emit(self.set_id)
 
+    def on_new_folder(self):
+        self.current_folder = self.open_button.current_folder
+        self.load_first_image()
+        self.image_loaded.emit()
+
+    """
     def open_folder(self):
         if self.current_image_path == "":
             folder = QFileDialog.getExistingDirectory(self, "Select Folder")
@@ -260,6 +411,8 @@ class ImageView(QWidget):
             self.current_folder = folder
             self.load_first_image()
             self.image_loaded.emit()
+            self.open_button.current_folder = folder
+    """
 
     def load_first_image(self):
         current_folder = self.current_folder
@@ -512,7 +665,7 @@ class ImageView(QWidget):
             if os.path.isfile(files[0]) and files[0].lower().endswith('.png'):
                 self.current_folder = os.path.dirname(files[0])
                 self.load_image(files[0])
-
+                self.open_button.current_folder = self.current_folder
 
 class ImageViewer(QMainWindow):
     def __init__(self):
@@ -603,9 +756,18 @@ class ImageViewer(QMainWindow):
 
         l_enable_tags = self.l_view.meta_tags
         r_enable_tags = self.r_view.meta_tags
-        
+
+        left_tags = list(left_metadata.keys())
+        right_tags = list(right_metadata.keys())
+
+        all_tag = left_tags.copy()
+        for item in right_tags:
+            if item not in all_tag:  # 結果リストに存在しない要素のみ追加
+                all_tag.append(item)        
+
+        self.cp_tags = all_tag.copy()
+
         for key in self.cp_tags[0:2]:
-#            ["Prompt", "Negative prompt"]:
             left_value = left_metadata.get(key, "")
             right_value = right_metadata.get(key, "")
 
@@ -674,6 +836,7 @@ class ImageViewer(QMainWindow):
         self.views[target].current_image_path = self.views[source].current_image_path
         self.views[target].image_label.image_path = self.views[source].current_image_path
         self.views[target].load_image(self.views[target].current_image_path)
+        self.views[target].open_button.current_folder = self.views[source].current_folder
         self.resize_image(target)
 
     def dropped_image(self, event, view):
