@@ -1,7 +1,7 @@
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                            QHBoxLayout, QLabel, QSplitter, QPushButton, QTextEdit,
                            QFileDialog, QTabWidget, QScrollArea, QFrame, QLineEdit,
-                           QDialog, QCheckBox, QMenu, QAction, QWidgetAction, QMessageBox)
+                           QDialog, QCheckBox, QMenu, QAction, QWidgetAction, QMessageBox, QSlider)
 from PyQt5.QtCore import Qt, QSize, QRect, QEvent, pyqtSignal, QMimeData, QUrl,QPoint 
 from PyQt5.QtGui import QPixmap, QDragEnterEvent, QDropEvent, QColor, QDrag
 from PyQt5.QtGui import QFont, QTextCharFormat, QTextCursor, QFontMetrics, QIcon
@@ -120,10 +120,10 @@ class OpenNavigationButtan(QPushButton):
         """ピン留めフォルダ用のウィジェットを作成（チェックボックス付き）"""
         widget = QWidget()
         layout = QHBoxLayout(widget)
-        layout.setContentsMargins(5, 0, 5, 0)
+        layout.setContentsMargins(20, 0, 5, 0)
     
         # スペースを追加してインデント効果を作る
-        indent_label = QLabel("　　")  # 全角スペースを使用
+        indent_label = QLabel("")  # 全角スペースを使用
     
         # フォルダ名だけを表示
         folder_name = os.path.basename(folder)
@@ -188,10 +188,13 @@ class OpenNavigationButtan(QPushButton):
         menu = QMenu(self)
         menu.setMinimumWidth(100)
         m_next = menu.addAction("次のフォルダ")
+        m_next.setEnabled(self.current_folder !="" )
         m_next.triggered.connect( partial(self.move_folder, 1) )
         m_prev = menu.addAction("前のフォルダ")
+        m_prev.setEnabled(self.current_folder !="" )
         m_prev.triggered.connect( partial(self.move_folder, -1) )
         pinning = menu.addAction("ピン留めする")  
+        pinning.setEnabled(self.current_folder !="" and self.current_folder not in self.pinned_folders)
         pinning.triggered.connect(self.pin_current_folder)
 
         if self.pinned_folders:
@@ -233,6 +236,15 @@ class OpenNavigationButtan(QPushButton):
     def move_folder(self, direction):
         parent_folder = Path(self.current_folder).parent
         folders = [f for f in os.listdir(parent_folder) if os.path.isdir(parent_folder / f)]
+        """
+        folders = []
+        for f in os.listdir(parent_folder):
+            n_folder = str(parent_folder / f)
+            n_folder = n_folder.replace("\\", "/")
+            if os.path.isdir(n_folder):
+                folders.append(f)
+        """
+
         if len(folders) == 0:
             return
 
@@ -241,7 +253,7 @@ class OpenNavigationButtan(QPushButton):
         
         new_index = (current_index + direction) % len(folders)
         new_folder_name = parent_folder / folders[new_index]
-        self.current_folder = str(new_folder_name)
+        self.current_folder = str(new_folder_name).replace("\\", "/")
         self.new_folder.emit()
             
 class DraggableImageLabel(QLabel):
@@ -687,6 +699,8 @@ class ImageViewer(QMainWindow):
         send_button = QPushButton("Send →")
         self.m_view.toolbar.addWidget(send_button)      
         send_button.clicked.connect( partial(self.send_to, 0, 1) )
+        send_button.setContextMenuPolicy(Qt.CustomContextMenu)
+        send_button.customContextMenuRequested.connect(self.show_send_context_menu)
         layout.addWidget(self.m_view.container)
         self.tab_widget.addTab(self.s_view, "ｼﾝｸﾞﾙ")
 
@@ -699,13 +713,17 @@ class ImageViewer(QMainWindow):
         send_button1.setFixedWidth(30)
         self.l_view.toolbar.addWidget(send_button1)      
         send_button1.clicked.connect( partial(self.send_to, 1, 0) )
+        send_button1.setContextMenuPolicy(Qt.CustomContextMenu)
+        send_button1.customContextMenuRequested.connect(self.show_send_context_menu)
         layout.addWidget(self.l_view.container)
         send_button2 = QPushButton("←←")
         send_button2.setFixedWidth(30)
         self.r_view.toolbar.addWidget(send_button2)      
         send_button2.clicked.connect( partial(self.send_to, 2, 0) )
-
+        send_button2.setContextMenuPolicy(Qt.CustomContextMenu)
+        send_button2.customContextMenuRequested.connect(self.show_send_context_menu)
         layout.addWidget(self.r_view.container)
+
         self.l_view.image_loaded.connect(self.compare_metadata)
         self.r_view.image_loaded.connect(self.compare_metadata)
 
@@ -722,6 +740,28 @@ class ImageViewer(QMainWindow):
 
         for view in self.views:
             view.area_resized.connect(self.update_images)
+
+
+    def show_send_context_menu(self, pos):
+        sender = self.sender()
+        menu = QMenu()
+        send_move = menu.addAction("送って移動")
+        if sender.text() == "Send →":
+            send_move.setEnabled(self.m_view.current_folder !="" )
+            send_move.triggered.connect( partial(self.send_and_move, 0, 1) )
+        elif sender.text() == "←":
+            send_move.setEnabled(self.l_view.current_folder !="" )
+            send_move.triggered.connect( partial(self.send_and_move, 1, 0) )
+        elif sender.text() == "←←":
+            send_move.setEnabled(self.r_view.current_folder !="" )
+            send_move.triggered.connect( partial(self.send_and_move, 2, 0) )
+
+        menu.exec_(sender.mapToGlobal(pos))
+
+    def send_and_move(self, source, target):
+        self.send_to(source, target)
+        self.tab_widget.setCurrentIndex(target)
+
 
     def compare_metadata(self):
         if self.l_view.current_image_path and self.r_view.current_image_path:
