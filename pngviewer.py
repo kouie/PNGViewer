@@ -3,8 +3,8 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                            QFileDialog, QTabWidget, QScrollArea, QFrame, QLineEdit,
                            QDialog, QCheckBox, QMenu, QAction, QWidgetAction, QMessageBox, QSlider)
 from PyQt5.QtCore import Qt, QSize, QRect, QEvent, pyqtSignal, QMimeData, QUrl,QPoint 
-from PyQt5.QtGui import QPixmap, QDragEnterEvent, QDropEvent, QColor, QDrag
-from PyQt5.QtGui import QFont, QTextCharFormat, QTextCursor, QFontMetrics, QIcon
+from PyQt5.QtGui import QPixmap, QDragEnterEvent, QDropEvent, QColor, QDrag, QCursor, QGuiApplication
+from PyQt5.QtGui import QFont, QTextCharFormat, QTextCursor, QFontMetrics, QIcon, QTextDocument
 import os
 import re
 from pathlib import Path
@@ -50,7 +50,7 @@ class MetadataLabel(QLabel):
         copyAction = menu.addAction("コピー")
         copyAction.triggered.connect(self.copy)
         
-        selectAllAction = menu.addAction("すべて選択")
+        selectAllAction = menu.addAction("項目の値をコピー")
         selectAllAction.triggered.connect(self.selectAll)
         
         # セパレーターを追加
@@ -68,13 +68,15 @@ class MetadataLabel(QLabel):
 
     def copy(self):
         # テキストをクリップボードにコピー
-        from PyQt5.QtGui import QGuiApplication
         clipboard = QGuiApplication.clipboard()
         clipboard.setText(self.selectedText())
     
     def selectAll(self):
-        # 実装が必要な場合
-        pass
+#        raw = self.value.replace("\n","")
+#        self.setSelection(len(self.label)+2, len(raw)-2)
+        clipboard = QGuiApplication.clipboard()        
+        clipboard.setText(self.value)
+
 
 class CheckableListDialog(QDialog):
     def __init__(self, items, parent=None):
@@ -121,7 +123,7 @@ class OpenNavigationButtan(QPushButton):
         widget = QWidget()
         layout = QHBoxLayout(widget)
         layout.setContentsMargins(20, 0, 5, 0)
-    
+
         # スペースを追加してインデント効果を作る
         indent_label = QLabel("")  # 全角スペースを使用
     
@@ -298,6 +300,57 @@ class DraggableImageLabel(QLabel):
 
         drag.exec_(Qt.CopyAction)
 
+class SliderPopup(QFrame):
+    def __init__(self, folder, index, parent=None):
+        super().__init__(parent)
+        # フレームのスタイルを設定
+        self.setFrameShape(QFrame.StyledPanel)
+        self.setFrameShadow(QFrame.Raised)
+        self.setWindowFlags(Qt.Popup)  # ポップアップウィンドウとして設定
+
+        self.image_folder = folder
+        self.image_files = []
+        self.current_index = index
+
+        # レイアウト設定
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(5, 5, 5, 5)
+        
+        # スライダーの作成
+        self.slider = QSlider(Qt.Horizontal)
+        self.slider.setMinimum(0)
+        self.slider.setMaximum(0)
+        layout.addWidget(self.slider)
+        
+        # 幅を設定
+#        self.setMinimumWidth(300)
+        self.setFixedWidth(300)
+
+    """        
+    def load_images_from_folder(self):
+        # 画像ファイルのみをフィルタリング
+        valid_extensions = ['.png']
+        self.image_files = [f for f in os.listdir(self.image_folder) 
+                          if os.path.isfile(os.path.join(self.image_folder, f)) and 
+                          os.path.splitext(f)[1].lower() in valid_extensions]
+        self.image_files.sort()  # ファイル名でソート
+        
+        # スライダーの設定を更新
+        if self.image_files:
+            self.slider.setMaximum(len(self.image_files) - 1)
+            self.current_index = 0
+            self.load_image(self.current_index)
+            self.statusBaar().showMessage(f"画像: {len(self.image_files)}枚")
+        else:
+            self.image_label.setText("画像がありません")
+            self.statusBar().showMessage("有効な画像ファイルがありません")
+    """
+
+    def mousePressEvent(self, event):
+        # スライダー内でのクリックイベントは親に伝搬しない
+        super().mousePressEvent(event)
+        event.accept()
+
 class ImageView(QWidget):
     image_loaded = pyqtSignal()
     area_resized = pyqtSignal(int)
@@ -333,6 +386,9 @@ class ImageView(QWidget):
         scroll_area.setWidget(self.image_label)
         self.splitter.addWidget(scroll_area)
 
+        scroll_area.setContextMenuPolicy(Qt.CustomContextMenu)
+        scroll_area.customContextMenuRequested.connect(self.show_slider_popup)
+
         # メタデータ表示用のスクロールエリア
         metadata_scroll = QScrollArea()
         metadata_scroll.setWidgetResizable(True)
@@ -340,7 +396,7 @@ class ImageView(QWidget):
         self.metadata_layout = QVBoxLayout(self.metadata_widget)
         metadata_scroll.setWidget(self.metadata_widget)
         metadata_scroll.setContextMenuPolicy(Qt.CustomContextMenu)
-        metadata_scroll.customContextMenuRequested.connect(self.showContextMenu)
+        metadata_scroll.customContextMenuRequested.connect(self.show_tagSelection_ContextMenu)
         self.splitter.addWidget(metadata_scroll)
         
         # スプリッターの初期サイズ設定
@@ -350,6 +406,9 @@ class ImageView(QWidget):
         self.toolbar = self.setup_toolbar()
         layout.insertLayout(0,self.toolbar)
 
+        self.slider_popup = SliderPopup(self.current_folder, self.current_index)
+        self.slider_popup.slider.valueChanged.connect(self.on_slider_value_changed)
+        
         self.image_label.installEventFilter(self)
         self.container.setAcceptDrops(True)
         self.container.installEventFilter(self)
@@ -383,13 +442,60 @@ class ImageView(QWidget):
  
         return toolbar        
 
-    def showContextMenu(self, position):
+    def show_tagSelection_ContextMenu(self, position):
         menu = QMenu()
         selectAction = QAction("項目を選択...", self)
         selectAction.triggered.connect(self.selectItems)
         menu.addAction(selectAction)
         menu.exec_(self.metadata_widget.mapToGlobal(position))
 
+    def on_slider_value_changed(self, index):
+        if 0 <= index < len(self.slider_popup.image_files):
+            self.current_index = index
+            image_path = os.path.join(self.current_folder, self.slider_popup.image_files[index])
+
+        self.load_image(image_path)
+
+    def show_slider_popup(self, position):
+        # 画像がない場合は何もしない
+        if self.current_folder == "":
+            return
+        
+        # カーソル位置を取得
+        cursor_pos = QCursor.pos()
+
+        # スライダーを適切な位置に配置
+        # カーソル位置の少し下に表示
+        popup_pos = cursor_pos + QPoint(-self.slider_popup.width() // 2, 10)
+        
+        # ウィンドウ範囲を超えないように調整
+        screen_rect = QApplication.desktop().screenGeometry()
+        if popup_pos.x() < screen_rect.left():
+            popup_pos.setX(screen_rect.left())
+        if popup_pos.x() + self.slider_popup.width() > screen_rect.right():
+            popup_pos.setX(screen_rect.right() - self.slider_popup.width())
+        
+        self.slider_popup.image_folder = self.current_folder
+        self.slider_popup.current_index = self.current_index
+        self.load_images_from_folder()
+
+        self.slider_popup.move(popup_pos)
+        self.slider_popup.show()
+
+    def load_images_from_folder(self):
+        # 画像ファイルのみをフィルタリング
+        valid_extensions = ['.png']
+        image_files = [f for f in os.listdir(self.current_folder) 
+                          if os.path.isfile(os.path.join(self.current_folder, f)) and 
+                          os.path.splitext(f)[1].lower() in valid_extensions]
+        image_files.sort()  # ファイル名でソート
+        
+        # スライダーの設定を更新
+        if image_files:
+            self.slider_popup.slider.setMaximum(len(image_files) - 1)
+            self.slider_popup.image_files = image_files.copy()
+            self.slider_popup.slider.setValue(self.current_index)
+            
     def selectItems(self):
         meta_all = self.metadata.keys()
         dialog = CheckableListDialog(meta_all, self)
@@ -409,22 +515,10 @@ class ImageView(QWidget):
 
     def on_new_folder(self):
         self.current_folder = self.open_button.current_folder
+        self.current_index = 0
+        self.slider_popup.slider.setValue(0)
         self.load_first_image()
         self.image_loaded.emit()
-
-    """
-    def open_folder(self):
-        if self.current_image_path == "":
-            folder = QFileDialog.getExistingDirectory(self, "Select Folder")
-        else:
-            folder = QFileDialog.getExistingDirectory(self, "Select Folder", self.current_folder)
-
-        if folder:
-            self.current_folder = folder
-            self.load_first_image()
-            self.image_loaded.emit()
-            self.open_button.current_folder = folder
-    """
 
     def load_first_image(self):
         current_folder = self.current_folder
@@ -621,7 +715,8 @@ class ImageView(QWidget):
                 self.metadata_layout.addWidget(label)
                 label.r_button_clicked.connect(self.selectItems)
 
-        self.metadata_layout.insertWidget(0, MetadataLabel("File",f"{self.current_image_path}"))
+        filename = self.current_image_path.replace("\\","/")
+        self.metadata_layout.insertWidget(0, MetadataLabel("File",f"{filename}"))
         self.metadata_layout.addStretch()
 
 
@@ -668,6 +763,14 @@ class ImageView(QWidget):
                 return True
 
             return True
+
+        elif event.type() == QEvent.MouseButtonPress:
+            # スライダーポップアップが表示されている場合
+            if self.slider_popup.isVisible():
+                # クリック位置がスライダーの外にある場合
+                if not self.slider_popup.geometry().contains(event.globalPos()):
+                    self.slider_popup.hide()
+                    return True
 
         return super().eventFilter(watched, event)
     
@@ -865,8 +968,10 @@ class ImageViewer(QMainWindow):
         left_layout.addStretch()
         right_layout.addStretch()
 
-        left_layout.insertWidget(0, MetadataLabel("File",f"{self.l_view.current_image_path}"))
-        right_layout.insertWidget(0, MetadataLabel("File",f"{self.r_view.current_image_path}"))        
+        left_file = self.l_view.current_image_path.replace("\\", "/")
+        right_file = self.r_view.current_image_path.replace("\\", "/")
+        left_layout.insertWidget(0, MetadataLabel("File",f"{left_file}"))
+        right_layout.insertWidget(0, MetadataLabel("File",f"{right_file}"))
 
     def scale_pixmap(self, pixmap, size):
         return pixmap.scaled(size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
