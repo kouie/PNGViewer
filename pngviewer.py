@@ -1,12 +1,13 @@
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
-                           QHBoxLayout, QLabel, QSplitter, QPushButton, QTextEdit,
-                           QFileDialog, QTabWidget, QScrollArea, QFrame, QLineEdit,
+                           QHBoxLayout, QLabel, QSplitter, QPushButton, QTextEdit, 
+                           QFileDialog, QTabWidget, QScrollArea, QFrame, QLineEdit, QLayout, qApp,
                            QDialog, QCheckBox, QMenu, QAction, QWidgetAction, QMessageBox, QSlider)
-from PyQt5.QtCore import Qt, QSize, QRect, QEvent, pyqtSignal, QMimeData, QUrl,QPoint 
+from PyQt5.QtCore import Qt, QSize, QRect, QEvent, pyqtSignal, QMimeData, QUrl, QPoint, QByteArray 
 from PyQt5.QtGui import QPixmap, QDragEnterEvent, QDropEvent, QColor, QDrag, QCursor, QGuiApplication
 from PyQt5.QtGui import QFont, QTextCharFormat, QTextCursor, QFontMetrics, QIcon, QTextDocument
 import os
 import re
+import json
 from pathlib import Path
 from PIL import Image
 from PIL.PngImagePlugin import PngImageFile
@@ -31,7 +32,6 @@ class MetadataLabel(QLabel):
         else:
             value = self.value.replace("\n", "<br>")
             self.setText(f"<b>{self.label}:</b> {value}")
-#            self.setText(f"<b>{self.label}:</b> {self.value}")
 
     def apply_highlight(self, words_to_highlight, color):
         all_text = self.value 
@@ -238,14 +238,6 @@ class OpenNavigationButtan(QPushButton):
     def move_folder(self, direction):
         parent_folder = Path(self.current_folder).parent
         folders = [f for f in os.listdir(parent_folder) if os.path.isdir(parent_folder / f)]
-        """
-        folders = []
-        for f in os.listdir(parent_folder):
-            n_folder = str(parent_folder / f)
-            n_folder = n_folder.replace("\\", "/")
-            if os.path.isdir(n_folder):
-                folders.append(f)
-        """
 
         if len(folders) == 0:
             return
@@ -263,7 +255,6 @@ class DraggableImageLabel(QLabel):
         super().__init__(parent)
         self.image_path = image_path  # 元の画像ファイルパスを保持
         self.setPixmap(QPixmap(image_path))
-#        self.setAcceptDrops(True)
         
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -285,7 +276,8 @@ class DraggableImageLabel(QLabel):
         # 実際のファイルパスをURLとして設定
         file_url = QUrl.fromLocalFile(os.path.abspath(self.image_path))
         mime_data.setUrls([file_url])
-        
+        self.setup_mime_data(mime_data)
+
         drag.setMimeData(mime_data)
         
         # ドラッグ時のプレビュー表示用
@@ -299,6 +291,87 @@ class DraggableImageLabel(QLabel):
         drag.setHotSpot(QPoint(hot_x, hot_y))
 
         drag.exec_(Qt.CopyAction)
+
+    def setup_mime_data(self, mime_data):
+        """MIMEデータをセットアップ（サブクラスでオーバーライド可能）"""
+        # 基底クラスでは基本的なMIMEタイプのみ設定
+        mime_data.setData("application/x-imageviewer", QByteArray(self.image_path.encode()))        
+
+
+class ViewerDraggableLabel(DraggableImageLabel):
+    deleteRequested = pyqtSignal(str)
+
+    def __init__(self, image_path, parent=None):
+        super().__init__(image_path, parent)        
+        self.setAcceptDrops(True)  # ドロップも受け付けるように変更     
+        self.thumbnail_size = 150   
+        
+        # 固定サイズを設定（パディングを考慮）
+        padding = 8  # ボーダーとパディングの合計
+        self.setFixedSize(self.thumbnail_size + padding, self.thumbnail_size + padding)
+        
+        # コンテキストメニュー（右クリックメニュー）を有効化
+        self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self.showContextMenu)
+
+    def setup_mime_data(self, mime_data):
+        """コレクション用のMIMEデータをセットアップ"""
+        super().setup_mime_data(mime_data)
+        # コレクション内での順序変更用のデータを追加
+        mime_data.setData("application/x-image-sortable", QByteArray(self.image_path.encode()))
+        
+    def dragEnterEvent(self, event):
+        """ドラッグがサムネイル上に入ったときの処理（サムネイル入れ替え用）"""
+        if event.mimeData().hasFormat("application/x-image-sortable"):
+            # 内部ドラッグの場合は受け入れる
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+    
+    def dropEvent(self, event):
+        """ドロップされたときの処理（サムネイル入れ替え用）"""
+        if event.mimeData().hasFormat("application/x-image-sortable"):
+            # ドロップされた画像のパスを取得
+            source_path = event.mimeData().data("application/x-image-sortable").data().decode()
+            target_path = self.image_path
+            
+            # 自分自身へのドロップの場合は無視
+            if source_path == target_path:
+                event.ignore()
+                return
+            
+            # 親ウィジェット（CollectionWidget）に順序変更を通知
+            parent = self.parent()
+
+            # 親をたどってCollectionWidgetを探す
+            while parent:
+                if isinstance(parent, CollectionWidget):
+                    collection_widget = parent
+                    break
+                parent = parent.parent()
+
+            # CollectionWidgetが見つかったら順序変更を通知
+            if collection_widget and hasattr(collection_widget, 'swapImages'):
+                collection_widget.swapImages(source_path, target_path)
+                event.acceptProposedAction()
+            else:
+                print("CollectionWidget not found or swapImages method not available")
+                event.ignore()
+        else:
+            event.ignore()
+
+    def showContextMenu(self, position):
+        """右クリックメニューを表示"""
+        context_menu = QMenu(self)
+        
+        # 削除アクション
+        delete_action = context_menu.addAction("削除")
+        delete_action.triggered.connect(lambda: self.deleteRequested.emit(self.image_path))
+        
+        # メニューを表示
+        context_menu.exec_(self.mapToGlobal(position))
+
+
 
 class SliderPopup(QFrame):
     def __init__(self, folder, index, parent=None):
@@ -323,33 +396,319 @@ class SliderPopup(QFrame):
         layout.addWidget(self.slider)
         
         # 幅を設定
-#        self.setMinimumWidth(300)
         self.setFixedWidth(300)
-
-    """        
-    def load_images_from_folder(self):
-        # 画像ファイルのみをフィルタリング
-        valid_extensions = ['.png']
-        self.image_files = [f for f in os.listdir(self.image_folder) 
-                          if os.path.isfile(os.path.join(self.image_folder, f)) and 
-                          os.path.splitext(f)[1].lower() in valid_extensions]
-        self.image_files.sort()  # ファイル名でソート
-        
-        # スライダーの設定を更新
-        if self.image_files:
-            self.slider.setMaximum(len(self.image_files) - 1)
-            self.current_index = 0
-            self.load_image(self.current_index)
-            self.statusBaar().showMessage(f"画像: {len(self.image_files)}枚")
-        else:
-            self.image_label.setText("画像がありません")
-            self.statusBar().showMessage("有効な画像ファイルがありません")
-    """
 
     def mousePressEvent(self, event):
         # スライダー内でのクリックイベントは親に伝搬しない
         super().mousePressEvent(event)
         event.accept()
+
+class FlowLayout(QLayout):    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setContentsMargins(0, 0, 0, 0)
+        self.setSpacing(5)
+        
+        self.items = []  # レイアウトアイテムのリスト
+    
+    def __del__(self):
+        # アイテムを削除
+        item = self.takeAt(0)
+        while item:
+            item = self.takeAt(0)
+    
+    def addItem(self, item):
+        self.items.append(item)
+    
+    def count(self):
+        return len(self.items)
+    
+    def itemAt(self, index):
+        if 0 <= index < self.count():
+            return self.items[index]
+        return None
+    
+    def takeAt(self, index):
+        if 0 <= index < self.count():
+            return self.items.pop(index)
+        return None
+    
+    def expandingDirections(self):
+        return Qt.Orientations(Qt.Orientation(0))  # 拡張方向なし
+    
+    def hasHeightForWidth(self):
+        return True
+    
+    def heightForWidth(self, width):
+        return self.do_layout(QRect(0, 0, width, 0))
+
+    def sizeHint(self):
+        return self.minimumSize()
+    
+    def minimumSize(self):
+        size = QSize()
+        
+        for item in self.items:
+            size = size.expandedTo(item.minimumSize())
+            
+        margin = self.contentsMargins()
+        size += QSize(margin.left() + margin.right(), margin.top() + margin.bottom())
+        return size
+
+    def setGeometry(self, rect):
+        super().setGeometry(rect)
+        self.do_layout(rect)
+        
+    def do_layout(self, rect):
+        x = rect.x()
+        y = rect.y()
+        line_height = 0
+        layout_spacing = 10
+        
+        for item in self.items:
+            next_x = x + item.sizeHint().width() + layout_spacing
+            if next_x - layout_spacing > rect.right() and line_height > 0:
+                x = rect.x()
+                y = y + line_height + layout_spacing
+                next_x = x + item.sizeHint().width() + layout_spacing
+                line_height = 0
+
+            item.setGeometry(QRect(QPoint(x, y), item.sizeHint()))
+            x = next_x
+            line_height = max(line_height, item.sizeHint().height())
+        
+        return y + line_height - rect.y()
+
+class CollectionWidget(QWidget):
+    """画像コレクションを表示するウィジェット"""
+    
+    # 画像が選択されたときのシグナル（パスを送信）
+    image_selected = pyqtSignal(str)
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.init_ui()
+        self.images = []  # 画像パスのリスト
+        self.thumbnail_size = 150
+        self.thumbnails = []  # サムネイルウィジェットのリスト
+        self.thumbnail_map = {}
+        self.setMinimumWidth(170)
+
+    def init_ui(self):
+        # ウィジェットのレイアウト設定
+        self.main_layout = QVBoxLayout(self)
+        
+        # ツールバー用のレイアウト
+        toolbar_layout = QHBoxLayout()
+        
+        # クリアボタン
+        self.clear_button = QPushButton("クリア", self)
+        self.clear_button.setFixedWidth(40)
+        self.clear_button.clicked.connect(self.clear_collection)
+        toolbar_layout.addWidget(self.clear_button)
+
+        text_box = QLineEdit()
+        text_box.setMinimumWidth(100)
+        text_box.setPlaceholderText(" メモ...")        
+        toolbar_layout.addWidget(text_box)
+
+        toolbar_layout.addStretch(1)
+        
+        # メインレイアウトにツールバーを追加
+        self.main_layout.addLayout(toolbar_layout)
+        
+        # スクロール可能なエリア
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.scroll_area.setFrameShape(QFrame.NoFrame)
+
+        # コンテンツウィジェット
+        self.scroll_content = QWidget()
+        
+        # カスタムのフローレイアウトを使用
+        self.flow_layout = FlowLayout(self.scroll_content)
+        
+        # コンテンツウィジェットにフローレイアウトを設定
+        self.scroll_content.setLayout(self.flow_layout)
+        
+        self.scroll_area.setWidget(self.scroll_content)
+        self.main_layout.addWidget(self.scroll_area)
+        
+        # ドラッグ&ドロップを受け付ける設定
+        self.setAcceptDrops(True)
+    
+    def add_image(self, image_path):
+        """コレクションに画像を追加"""
+        if image_path in self.images:
+            return  # 既に追加済みの場合はスキップ
+        
+        # 画像パスをリストに追加
+        self.images.append(image_path)
+        
+        # 画像サムネイルの作成
+        thumbnail = ViewerDraggableLabel("", self)
+        pixmap = QPixmap(image_path)
+        scaled_image = pixmap.scaled(self.thumbnail_size, self.thumbnail_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        thumbnail.setPixmap(scaled_image)
+
+        thumbnail.setAlignment(Qt.AlignCenter)
+        thumbnail.setFixedSize(self.thumbnail_size, self.thumbnail_size)
+        thumbnail.image_path = image_path
+        
+        # クリックイベントの処理
+        # mousePressEventを上書きするのではなく、クリックシグナルを接続
+        thumbnail.mouseClicked = lambda img_path: self.image_selected.emit(img_path)
+
+        # 削除リクエストのシグナルを接続
+        thumbnail.deleteRequested.connect(self.remove_image)
+
+        # サムネイルをリストに追加
+        self.thumbnails.append(thumbnail)
+        
+        # パスからサムネイルへのマッピングを更新
+        self.thumbnail_map[image_path] = thumbnail
+
+        # フローレイアウトに追加
+        self.flow_layout.addWidget(thumbnail)
+        
+        # レイアウトを更新
+        self.flow_layout.update()
+
+    def remove_image(self, image_path):
+        """特定の画像をコレクションから削除"""
+        if image_path in self.images:
+            # リストから画像パスを削除
+            self.images.remove(image_path)
+            
+            # サムネイルを取得して削除
+            if image_path in self.thumbnail_map:
+                thumbnail = self.thumbnail_map[image_path]
+                self.thumbnails.remove(thumbnail)
+                del self.thumbnail_map[image_path]
+                
+                # ウィジェットをレイアウトと親から削除
+                thumbnail.setParent(None)
+                
+                # レイアウトを更新
+                self.flow_layout.update()
+
+    def swapImages(self, source_path, target_path):
+        """画像の順序を入れ替える"""
+        if source_path in self.images and target_path in self.images:
+            # 現在のインデックスを取得
+            source_idx = self.images.index(source_path)
+            target_idx = self.images.index(target_path)
+            
+            # リスト内での順序を入れ替え
+            # 相互に入替
+#            self.images[source_idx], self.images[target_idx] = self.images[target_idx], self.images[source_idx]
+            source_image = self.images.pop(source_idx)  # ドロップ位置に挿入
+            self.images.insert(target_idx, source_image)
+            
+            # 一度すべてのサムネイルをレイアウトから削除
+            for thumbnail in self.thumbnails:
+                thumbnail.setParent(None)
+            
+            # 新しい順序でウィジェットを追加し直す
+            for image_path in self.images:
+                if image_path in self.thumbnail_map:
+                    thumbnail = self.thumbnail_map[image_path]
+                    self.flow_layout.addWidget(thumbnail)
+            
+            # レイアウトを更新
+            self.flow_layout.update()
+
+    def clear_collection(self):
+        """コレクションをクリア"""
+        # フローレイアウトからすべてのウィジェットを削除
+        for thumbnail in self.thumbnails:
+            thumbnail.setParent(None)
+        
+        # サムネイルと画像リストをクリア
+        self.thumbnails.clear()
+        self.images.clear()
+        
+        # レイアウトを更新
+        self.flow_layout.update()
+    
+    # _on_thumbnail_clicked メソッドは削除
+    # 代わりに DraggableLabel クラスの mousePressEvent 内でクリックを処理
+    
+    def dragEnterEvent(self, event):
+        """ドラッグがウィジェット上に入ったときのイベント"""
+        mime_data = event.mimeData()
+        
+        # URLのドラッグを受け付ける（ファイルのドラッグ）
+        if mime_data.hasUrls():
+            for url in mime_data.urls():
+                if url.isLocalFile():
+                    file_path = url.toLocalFile()
+                    ext = os.path.splitext(file_path)[1].lower()
+                    if ext in ['.png']:
+                        event.acceptProposedAction()
+                        return
+        
+        event.ignore()
+    
+    def dropEvent(self, event):
+        """ドロップイベントの処理"""
+        mime_data = event.mimeData()
+        
+        if mime_data.hasUrls():
+            for url in mime_data.urls():
+                if url.isLocalFile():
+                    file_path = url.toLocalFile()
+                    ext = os.path.splitext(file_path)[1].lower()
+                    if ext in ['.png']:
+                        self.add_image(file_path)
+            
+            event.acceptProposedAction()
+
+class CollectionWindow(QMainWindow):
+    """コレクションを表示するウィンドウ"""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.collection_widget = CollectionWidget(self)
+        self.setCentralWidget(self.collection_widget)
+        
+        self.setWindowTitle("画像コレクション")
+        self.resize(700, 200)
+        
+        # メインウィンドウとの連携用シグナル
+        self.collection_widget.image_selected.connect(self.on_image_selected)
+
+        # ウィンドウサイズが変更されたら、レイアウトを更新
+        self.resizeEvent = self.on_resize
+
+    def on_image_selected(self, image_path):
+        """画像が選択されたときのスロット（必要に応じてメインウィンドウに通知）"""
+        # ここでメインウィンドウに通知したりできます
+        print(f"選択された画像: {image_path}")
+        
+    def add_image(self, image_path):
+        """コレクションに画像を追加するメソッド（外部からも呼び出し可能）"""
+        self.collection_widget.add_image(image_path)
+
+    def on_resize(self, event):
+        """ウィンドウサイズ変更時のイベント"""
+        # サイズ変更時にフローレイアウトを更新
+        if hasattr(self, 'collection_widget') and hasattr(self.collection_widget, 'flow_layout'):
+            self.collection_widget.flow_layout.update()
+        
+        # 通常のリサイズイベント処理も実行
+        super().resizeEvent(event)
+
+    def closeEvent(self, event):
+        # 親クラスに自分自身を認識させる方法で通知
+        if self.parent() and hasattr(self.parent(), 'remove_collection'):
+            self.parent().remove_collection(self)
+
+        # 標準のcloseEvent処理を呼び出す
+        super().closeEvent(event)
+
 
 class ImageView(QWidget):
     image_loaded = pyqtSignal()
@@ -431,7 +790,7 @@ class ImageView(QWidget):
         # テキスト入力ボックスを追加
 #        f_label = QLabel(" Filter:")
         self.text_box = QLineEdit()
-        self.text_box.setMinimumWidth(200)
+        self.text_box.setMinimumWidth(180)
         self.text_box.setPlaceholderText(" filter by prompt text...")
         self.text_box.setClearButtonEnabled(True)
         self.text_box.editingFinished.connect(self.text_entered)
@@ -440,6 +799,10 @@ class ImageView(QWidget):
 
         toolbar.addStretch()
  
+        self.open_collection_button = QPushButton("CL")
+        self.open_collection_button.setFixedWidth(40)
+        toolbar.addWidget(self.open_collection_button)
+
         return toolbar        
 
     def show_tagSelection_ContextMenu(self, position):
@@ -686,7 +1049,38 @@ class ImageView(QWidget):
                 metadata[key] = value
 
         return metadata
-        
+
+    def extract_comfy_metadata(self, value):
+        metadata = json.loads(value)
+        prompt = {}
+        others = {}
+        prompt_tags = ["Prompt", "Negative prompt"]
+        text_id = 0
+        for id, values in metadata.items():
+            inputs = values["inputs"]
+            class_type = values["class_type"]
+
+            for key, value in inputs.items():
+                if class_type == "CLIPTextEncode":
+                    if key != "text":
+                        continue
+                    key_id = key + str(text_id)
+#                    if key_id in prompt:
+                    if prompt_tags[text_id] in prompt:
+                        text_id += 1
+                        key_id = key + str(text_id)
+#                    prompt[key_id] = str(value)
+                    prompt_key = prompt_tags[text_id]
+                    prompt[prompt_key] = str(value)
+                else:
+                    others[key] = str(value)
+            
+        meta = prompt | others
+
+        return meta
+
+
+
     def extract_png_metadata(self, image_path):
         try:
             with Image.open(image_path) as img:
@@ -695,6 +1089,9 @@ class ImageView(QWidget):
                     for key, value in img.info.items():
                         if key.lower() in ['parameters']:
                             return self.parse_metadata(value)
+                        elif key.lower() in ['prompt']:
+                            meta = self.extract_comfy_metadata(value)
+                            return meta
             return {}
         except Exception as e:
             print(f"Error extracting metadata: {e}")
@@ -735,9 +1132,10 @@ class ImageView(QWidget):
             item = self.metadata_layout.itemAt(i)
             if item and item.widget():
                 widget = item.widget()
-                if isinstance(widget, MetadataLabel) and widget.label == "Seed":
-                    QApplication.clipboard().setText(widget.value)
-                    break
+                if isinstance(widget, MetadataLabel):
+                    if widget.label == "Seed" or widget.label == "seed":
+                        QApplication.clipboard().setText(widget.value)
+                        break
 
     def eventFilter(self, watched, event):
         if event.type() == QEvent.Wheel:
@@ -827,6 +1225,9 @@ class ImageViewer(QMainWindow):
         send_button2.customContextMenuRequested.connect(self.show_send_context_menu)
         layout.addWidget(self.r_view.container)
 
+        self.collection_windows = []
+        self.collection_idx = 0
+       
         self.l_view.image_loaded.connect(self.compare_metadata)
         self.r_view.image_loaded.connect(self.compare_metadata)
 
@@ -843,6 +1244,7 @@ class ImageViewer(QMainWindow):
 
         for view in self.views:
             view.area_resized.connect(self.update_images)
+            view.open_collection_button.clicked.connect(self.create_collection)
 
 
     def show_send_context_menu(self, pos):
@@ -1036,6 +1438,23 @@ class ImageViewer(QMainWindow):
         elif set_id == 0:
             self.resize_image(0)
 
+    def create_collection(self):
+        """新しいコレクションウィンドウを作成"""
+        collection = CollectionWindow(self)
+#        pos_y = 200 * ((len(self.collection_windows) + 1) % int(qApp.desktop().screenGeometry().height() / 200))
+        collection.setGeometry(self.x() + self.width(), 200, 700, 200)
+        collection.setWindowTitle("Collection " + str(self.collection_idx))
+        collection.show()
+        self.collection_idx += 1
+        
+        # コレクションウィンドウのリストに追加
+        self.collection_windows.append(collection)
+        
+    def remove_collection(self, collection):
+        """コレクションウィンドウがクローズされたときに呼ばれる"""
+        if collection in self.collection_windows:
+            self.collection_windows.remove(collection)
+    
     def resizeEvent(self, event):
         """ウィンドウリサイズ時にも画像を更新"""
         if self.tab_widget.currentIndex() == 0:
