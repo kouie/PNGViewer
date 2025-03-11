@@ -255,7 +255,7 @@ class DraggableImageLabel(QLabel):
         super().__init__(parent)
         self.image_path = image_path  # 元の画像ファイルパスを保持
         self.setPixmap(QPixmap(image_path))
-        
+
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
             if self.pixmap() is None:
@@ -370,8 +370,6 @@ class ViewerDraggableLabel(DraggableImageLabel):
         
         # メニューを表示
         context_menu.exec_(self.mapToGlobal(position))
-
-
 
 class SliderPopup(QFrame):
     def __init__(self, folder, index, parent=None):
@@ -709,12 +707,69 @@ class CollectionWindow(QMainWindow):
         # 標準のcloseEvent処理を呼び出す
         super().closeEvent(event)
 
+class originalViewWindow(QMainWindow):
+    """原寸ビューを表示するウィンドウ"""
+    
+    def __init__(self, image_file, parent=None):
+        super().__init__(parent)
+        self.original_view = QWidget(self)
+        self.setCentralWidget(self.original_view)
+        self.layout = QVBoxLayout(self.original_view)
+
+        self.setWindowTitle(f"オリジナルサイズ - {image_file}")
+
+        self.image_label = QLabel()
+        self.image_label.setAlignment(Qt.AlignCenter)
+
+        self.image_label.setMouseTracking(True)
+        self.image_label.mouseDoubleClickEvent = self.on_image_double_click
+
+        self.pixmap = QPixmap(image_file)
+
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidget(self.image_label)
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setFrameShape(QFrame.NoFrame)
+        self.layout.addWidget(self.scroll_area)
+
+        
+        # 画像を表示
+        pixmap = QPixmap(image_file)
+        self.image_label.setPixmap(pixmap)
+        self.resize_window_to_image(pixmap)
+
+    def resize_window_to_image(self, pixmap):
+        """ウィンドウサイズを画像サイズに合わせて調整（画面サイズを考慮）"""
+        screen_size = QApplication.primaryScreen().availableSize()
+        img_width = pixmap.width()
+        img_height = pixmap.height()
+        
+        # 画面サイズの80%を超える場合は制限
+        max_width = int(screen_size.width() * 0.8)
+        max_height = int(screen_size.height() * 0.8)
+        
+        width = min(img_width, max_width)
+        height = min(img_height, max_height)
+        
+        self.resize(width + 40, height + 30)  # スクロールバーのスペースを考慮
+
+    def on_image_double_click(self, event):
+        self.close()
+
+    def closeEvent(self, event):
+        # 親クラスに自分自身を認識させる方法で通知
+        if self.parent() and hasattr(self.parent(), 'remove_originalView'):
+            self.parent().remove_originalView(self)
+
+        # 標準のcloseEvent処理を呼び出す
+        super().closeEvent(event)
 
 class ImageView(QWidget):
     image_loaded = pyqtSignal()
     area_resized = pyqtSignal(int)
     mouse_clicked = pyqtSignal(QPoint)
     metaarea_changed = pyqtSignal()
+    image_double_clicked = pyqtSignal()
 
     def __init__(self, set_id, parent=None):
         super().__init__(parent)        
@@ -742,6 +797,9 @@ class ImageView(QWidget):
         
         self.image_label.setAlignment(Qt.AlignCenter)
         self.image_label.setText("ファイルをドラッグ&ドロップするか\n左上のボタンをクリックしてフォルダを指定してください")
+        self.image_label.setMouseTracking(True)
+        self.image_label.mouseDoubleClickEvent = self.on_image_double_click
+
         scroll_area.setWidget(self.image_label)
         self.splitter.addWidget(scroll_area)
 
@@ -765,7 +823,7 @@ class ImageView(QWidget):
         self.toolbar = self.setup_toolbar()
         layout.insertLayout(0,self.toolbar)
 
-        self.slider_popup = SliderPopup(self.current_folder, self.current_index)
+        self.slider_popup = SliderPopup(self.current_folder, self.current_index, self)
         self.slider_popup.slider.valueChanged.connect(self.on_slider_value_changed)
         
         self.image_label.installEventFilter(self)
@@ -773,6 +831,8 @@ class ImageView(QWidget):
         self.container.installEventFilter(self)
 
         self.open_button.new_folder.connect(self.on_new_folder)
+
+        self.original_views = [] 
 
     def setup_toolbar(self):
         toolbar = QHBoxLayout()
@@ -846,6 +906,8 @@ class ImageView(QWidget):
         self.slider_popup.show()
 
     def load_images_from_folder(self):
+
+        self.slider_popup.slider.blockSignals(True)
         # 画像ファイルのみをフィルタリング
         valid_extensions = ['.png']
         image_files = [f for f in os.listdir(self.current_folder) 
@@ -859,6 +921,8 @@ class ImageView(QWidget):
             self.slider_popup.image_files = image_files.copy()
             self.slider_popup.slider.setValue(self.current_index)
             
+        self.slider_popup.slider.blockSignals(False)
+
     def selectItems(self):
         meta_all = self.metadata.keys()
         dialog = CheckableListDialog(meta_all, self)
@@ -1180,6 +1244,22 @@ class ImageView(QWidget):
                 self.load_image(files[0])
                 self.open_button.current_folder = self.current_folder
 
+                # スライダーの設定を更新
+#                self.load_images_from_folder()
+
+    def on_image_double_click(self, event):
+        """ダブルクリック時に元サイズ表示ウィンドウを開く"""
+        if self.current_image_path:
+            original_view = originalViewWindow(self.current_image_path, self)
+            original_view.show()
+
+        self.original_views.append(original_view)
+
+    def remove_originalView(self, original):
+        if original in self.original_views:
+            self.original_views.remove(original)
+#        print(len(self.original_views))     
+
 class ImageViewer(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -1227,7 +1307,7 @@ class ImageViewer(QMainWindow):
 
         self.collection_windows = []
         self.collection_idx = 0
-       
+
         self.l_view.image_loaded.connect(self.compare_metadata)
         self.r_view.image_loaded.connect(self.compare_metadata)
 
@@ -1245,7 +1325,6 @@ class ImageViewer(QMainWindow):
         for view in self.views:
             view.area_resized.connect(self.update_images)
             view.open_collection_button.clicked.connect(self.create_collection)
-
 
     def show_send_context_menu(self, pos):
         sender = self.sender()
