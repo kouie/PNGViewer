@@ -732,6 +732,9 @@ class originalViewWindow(QMainWindow):
         self.scroll_area.setFrameShape(QFrame.NoFrame)
         self.layout.addWidget(self.scroll_area)
 
+        # ウィンドウ移動関連の変数を初期化
+        self.dragging = False
+        self.drag_position = None
         
         # 画像を表示
         pixmap = QPixmap(image_file)
@@ -752,6 +755,25 @@ class originalViewWindow(QMainWindow):
         height = min(img_height, max_height)
         
         self.resize(width + 40, height + 30)  # スクロールバーのスペースを考慮
+
+    def mousePressEvent(self, event):
+        """マウスボタンが押されたときの処理"""
+        if event.button() == Qt.LeftButton:
+            self.dragging = True
+            self.drag_position = event.globalPos() - self.frameGeometry().topLeft()
+            event.accept()
+    
+    def mouseMoveEvent(self, event):
+        """マウスが移動したときの処理"""
+        if event.buttons() == Qt.LeftButton and self.dragging:
+            self.move(event.globalPos() - self.drag_position)
+            event.accept()
+    
+    def mouseReleaseEvent(self, event):
+        """マウスボタンが離されたときの処理"""
+        if event.button() == Qt.LeftButton:
+            self.dragging = False
+            event.accept()
 
     def on_image_double_click(self, event):
         self.close()
@@ -1253,7 +1275,7 @@ class ImageView(QWidget):
             original_view = originalViewWindow(self.current_image_path, self)
             original_view.show()
 
-        self.original_views.append(original_view)
+            self.original_views.append(original_view)
 
     def remove_originalView(self, original):
         if original in self.original_views:
@@ -1410,14 +1432,14 @@ class ImageViewer(QMainWindow):
                 left_label = MetadataLabel(key, left_value)
                 left_label.r_button_clicked.connect(self.l_view.selectItems)
                 left_layout.addWidget(left_label)
-                left_label.apply_highlight(only_in_left, "yellow")
+                left_label.apply_highlight(only_in_left, "#ffff80")
             
             # 右側のメタデータを表示
             if key in r_enable_tags:
                 right_label = MetadataLabel(key, right_value)
                 right_label.r_button_clicked.connect(self.r_view.selectItems)
                 right_layout.addWidget(right_label)
-                right_label.apply_highlight(only_in_right, "cyan")
+                right_label.apply_highlight(only_in_right, "#80ffff")
 
 
         # メタデータを比較しながら表示
@@ -1521,7 +1543,7 @@ class ImageViewer(QMainWindow):
         """新しいコレクションウィンドウを作成"""
         collection = CollectionWindow(self)
 #        pos_y = 200 * ((len(self.collection_windows) + 1) % int(qApp.desktop().screenGeometry().height() / 200))
-        collection.setGeometry(self.x() + self.width(), 200, 700, 200)
+        collection.setGeometry(self.x() + int(self.width()/2), 200, 700, 200)
         collection.setWindowTitle("Collection " + str(self.collection_idx))
         collection.show()
         self.collection_idx += 1
