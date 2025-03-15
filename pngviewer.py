@@ -709,15 +709,17 @@ class CollectionWindow(QMainWindow):
 
 class originalViewWindow(QMainWindow):
     """原寸ビューを表示するウィンドウ"""
-    
+    originalWindowClosed = pyqtSignal(object)
+
     def __init__(self, image_file, parent=None):
         super().__init__(parent)
+
         self.original_view = QWidget(self)
         self.setCentralWidget(self.original_view)
         self.layout = QVBoxLayout(self.original_view)
 
         self.setWindowTitle(f"オリジナルサイズ - {image_file}")
-
+        
         self.image_label = QLabel()
         self.image_label.setAlignment(Qt.AlignCenter)
 
@@ -780,8 +782,10 @@ class originalViewWindow(QMainWindow):
 
     def closeEvent(self, event):
         # 親クラスに自分自身を認識させる方法で通知
-        if self.parent() and hasattr(self.parent(), 'remove_originalView'):
-            self.parent().remove_originalView(self)
+#        if self.parent() and hasattr(self.parent(), 'remove_originalView'):
+#            self.parent().remove_originalView(self)
+
+        self.originalWindowClosed.emit(self)
 
         # 標準のcloseEvent処理を呼び出す
         super().closeEvent(event)
@@ -795,7 +799,7 @@ class ImageView(QWidget):
 
     def __init__(self, set_id, parent=None):
         super().__init__(parent)        
-        
+
         self.metadata = {}
         self.current_image_path = ""
         self.current_folder = ""
@@ -1272,7 +1276,8 @@ class ImageView(QWidget):
     def on_image_double_click(self, event):
         """ダブルクリック時に元サイズ表示ウィンドウを開く"""
         if self.current_image_path:
-            original_view = originalViewWindow(self.current_image_path, self)
+            original_view = originalViewWindow(self.current_image_path)
+            original_view.originalWindowClosed.connect(self.remove_originalView)    
             original_view.show()
 
             self.original_views.append(original_view)
