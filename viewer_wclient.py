@@ -895,7 +895,8 @@ class ImageView(QWidget):
     def show_slider_popup(self, position):
         if not self.current_folder: return
         
-        image_files = self.get_sorted_image_files(apply_filter=self.slider_popup.chk_filter.isChecked())
+        #image_files = self.get_sorted_image_files(apply_filter=self.slider_popup.chk_filter.isChecked())
+        image_files = self.get_sorted_image_files(apply_filter=True)
         if not image_files: return
 
         self.slider_popup.slider.blockSignals(True)
@@ -983,7 +984,8 @@ class ImageView(QWidget):
             self.load_image(os.path.join(self.current_folder, files[new_idx]))
         else:
             # スライダフィルタOFFでテキスト欄に入力がある場合は、従来の検索ジャンプ
-            files = self.get_sorted_image_files(apply_filter=False)
+            #files = self.get_sorted_image_files(apply_filter=False)
+            files = self.get_sorted_image_files(apply_filter=True)
             if not files: return
             current_name = os.path.basename(self.current_image_path)
             current_idx = files.index(current_name) if current_name in files else 0
