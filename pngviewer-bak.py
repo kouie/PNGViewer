@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
     QMenu, QSlider, QComboBox, QListWidget, QListWidgetItem, QMessageBox,
     QGroupBox, QGridLayout, QSpinBox, QDoubleSpinBox, QProgressBar, QWidgetAction
 )
-from PySide6.QtCore import Qt, QSize, QRect, QPoint, Signal, QMimeData, QUrl, QByteArray, QEvent, QThread, QTimer, QMutex, QMutexLocker
+from PySide6.QtCore import Qt, QSize, QRect, QPoint, Signal, QMimeData, QUrl, QByteArray, QEvent, QThread, QTimer
 from PySide6.QtGui import (
     QPixmap, QDragEnterEvent, QDropEvent, QColor, QDrag, QCursor,
     QGuiApplication, QFont, QIcon, QAction, QTextCursor,
@@ -166,67 +166,28 @@ class GenerationThread(QThread):
     error_occurred = Signal(str)
     generation_started = Signal()
 
-    def __init__(self, tasks: list[dict], interval: int, target_temp: float, target_model: str, output_dir: str, forever_mode: bool, fixed_seed: bool):
+    def __init__(self, tasks: list[dict], interval: int, target_temp: float, target_model: str, output_dir: str, forever_mode: bool):
         super().__init__()
         self.tasks, self.interval, self.target_temp, self.target_model, self.output_dir, self.forever_mode = tasks, interval, target_temp, target_model, output_dir, forever_mode
-        self.fixed_seed = fixed_seed
         self.is_running = True
-
-        self._mutex = QMutex()
-        self._pending_update = None # 更新待機用の変数
-        self.has_generated = False  # パラメータ更新時のタイマー継続用
-
-    def update_parameters(self, base_payload: dict, steps_list: list[int], fixed_seed: bool):
-        """UIスレッドから呼ばれる：次回のループで適用するパラメータを安全に予約する"""
-        with QMutexLocker(self._mutex):
-            self._pending_update = (base_payload, steps_list, fixed_seed)
 
     def run(self):
         task_idx, total_tasks = 0, len(self.tasks)
-
         while self.is_running:
-
-            # --- [追加] ループの先頭でタスクの更新を検知して切り替える ---
-            self._mutex.lock()
-            if self._pending_update:
-                base_payload, steps_list, new_fixed_seed = self._pending_update
-                self._pending_update = None
-                self.fixed_seed = new_fixed_seed
-                
-                # ① シード値の引き継ぎ計算（次に使う予定だったシード値を算出）
-                idx_in_list = task_idx % total_tasks
-                next_seed = self.tasks[idx_in_list]["seed"]
-                if task_idx >= total_tasks:
-                    next_seed += (task_idx // total_tasks) * total_tasks
-                
-                # ② 算出したシード値を base_payload に強制上書き
-                base_payload["seed"] = next_seed
-                
-                # ③ タスクリストを作成し直し、インデックスをリセット
-                # ※ create_generation_tasks は外部関数としてアクセスできる前提[cite: 1]
-                self.tasks = create_generation_tasks(base_payload, steps_list, 1, self.fixed_seed)
-                total_tasks = len(self.tasks)
-                task_idx = 0
-            self._mutex.unlock()
-            # --------------------------------------------------------
-
             idx_in_list = task_idx % total_tasks
             task = self.tasks[idx_in_list].copy()
             if task_idx >= total_tasks: task["seed"] += (task_idx // total_tasks) * total_tasks
             if self.target_model: task["override_settings"] = {"sd_model_checkpoint": self.target_model}
 
-            #if task_idx > 0 or self.target_temp < 100.0:
-            if self.has_generated or self.target_temp < 100.0:                
+            if task_idx > 0 or self.target_temp < 100.0:
                 start_time = time.time()
                 while self.is_running:
                     elapsed = time.time() - start_time
-                    #time_ok = (elapsed >= self.interval) if task_idx > 0 else True
-                    time_ok = (elapsed >= self.interval) if self.has_generated else True
+                    time_ok = (elapsed >= self.interval) if task_idx > 0 else True
                     temp = get_cpu_temperature()
                     temp_ok = (temp <= self.target_temp) if temp != -1.0 else True
                     temp_str = f"{temp}℃" if temp != -1.0 else "取得不可"
-                    #rem = max(0, int(self.interval - elapsed)) if task_idx > 0 else 0
-                    rem = max(0, int(self.interval - elapsed)) if self.has_generated else 0
+                    rem = max(0, int(self.interval - elapsed)) if task_idx > 0 else 0
                     mode_str = f" [∞ 無限ループ中 #{task_idx+1}]" if self.forever_mode else f" [{task_idx+1}/{total_tasks}]"
                     self.status_updated.emit(f"⏳ 待機中{mode_str} | 残り: {rem}秒 | CPU温度: {temp_str} (目標 <= {self.target_temp}℃)")
                     if time_ok and temp_ok: break
@@ -250,12 +211,8 @@ class GenerationThread(QThread):
             except Exception as e:
                 if self.is_running: self.error_occurred.emit(f"生成エラー: {str(e)}")
                 break
-
-            self.has_generated = True
-
             task_idx += 1
             if not self.forever_mode and task_idx >= total_tasks: break
-        
         self.finished_all.emit()
 
     def stop_loop_only(self): self.is_running = False
@@ -263,6 +220,7 @@ class GenerationThread(QThread):
         self.is_running = False
         try: requests.post(f"{FORGE_URL}/sdapi/v1/interrupt", timeout=2)
         except: pass
+
 
 # =====================================================================
 # ビューア用＆プレビュー用 ドラッグ対応ラベル
@@ -992,18 +950,6 @@ class ForgeClientPanel(QWidget):
 
         self.splitter.setSizes([300, 600])
 
-        # 各UI要素の変更を検知する
-        self.txt_prompt.textChanged.connect(self.on_ui_parameter_changed)
-        self.txt_neg_prompt.textChanged.connect(self.on_ui_parameter_changed)
-        self.spin_width.valueChanged.connect(self.on_ui_parameter_changed)
-        self.spin_height.valueChanged.connect(self.on_ui_parameter_changed)
-        self.edit_steps.textChanged.connect(self.on_ui_parameter_changed)
-        self.spin_cfg.valueChanged.connect(self.on_ui_parameter_changed)
-        self.edit_sampler.textChanged.connect(self.on_ui_parameter_changed)
-        self.edit_seed.textChanged.connect(self.on_ui_parameter_changed)
-        self.chk_fixed_seed.stateChanged.connect(self.on_ui_parameter_changed)
-        self.combo_model.currentIndexChanged.connect(self.on_ui_parameter_changed)        
-
     def browse_output_dir(self):
         if d := QFileDialog.getExistingDirectory(self, "保存先フォルダの選択", self.edit_out_dir.text()):
             self.edit_out_dir.setText(os.path.normpath(d))
@@ -1068,15 +1014,6 @@ class ForgeClientPanel(QWidget):
         if auto_start: self.start_generation()
 
     def start_generation(self):
-        # 既に生成スレッドが動いている場合は、「パラメータ更新」として処理を分岐
-        if self.thread and self.thread.isRunning():
-            self.apply_parameters_to_loop()
-            # ボタンを再び「変更なし（クリック不可）」の状態に戻す
-            self.btn_start.setEnabled(False)
-            self.btn_start.setText("⚙️ 生成処理中...")
-            self.btn_start.setStyleSheet("background-color: #FF9800; color: white; font-weight: bold; padding: 10px;")
-            return
-        
         try: seed_val = int(self.edit_seed.text().strip())
         except ValueError: seed_val = -1; self.edit_seed.setText("-1")
         steps_list = [int(s.strip()) for s in self.edit_steps.text().strip().split(',') if s.strip().isdigit()] or [20]
@@ -1087,21 +1024,10 @@ class ForgeClientPanel(QWidget):
         }
         tasks = create_generation_tasks(base_payload, steps_list, 1, self.chk_fixed_seed.isChecked())
         if not tasks: return
-        self.btn_start.setStyleSheet("background-color: #FF9800; color: white; font-weight: bold; padding: 10px;")
-        self.btn_start.setText("⚙️ 生成処理中...")
-        self.btn_start.setEnabled(False)
-        self.btn_stop_loop.setEnabled(True)
-        self.btn_interrupt.setEnabled(True)
-        self.progress_bar.setValue(0)
-
+        self.btn_start.setStyleSheet("background-color: #FF9800; color: white; font-weight: bold; padding: 10px;"); self.btn_start.setText("⚙️ 生成処理中..."); self.btn_start.setEnabled(False)
+        self.btn_stop_loop.setEnabled(True); self.btn_interrupt.setEnabled(True); self.progress_bar.setValue(0)
         target_model = self.combo_model.itemText(self.combo_model.currentIndex()) if self.combo_model.count() > 0 else ""
-
-        #self.thread = GenerationThread(tasks, self.spin_interval.value(), self.spin_temp.value(), target_model, self.edit_out_dir.text().strip(), self.chk_forever.isChecked())
-        self.thread = GenerationThread(
-            tasks, self.spin_interval.value(), self.spin_temp.value(), 
-            target_model, self.edit_out_dir.text().strip(), 
-            self.chk_forever.isChecked(), self.chk_fixed_seed.isChecked()
-        )
+        self.thread = GenerationThread(tasks, self.spin_interval.value(), self.spin_temp.value(), target_model, self.edit_out_dir.text().strip(), self.chk_forever.isChecked())
         self.thread.status_updated.connect(self.lbl_status.setText)
         self.thread.image_generated.connect(self.on_image_generated)
         self.thread.error_occurred.connect(self.on_generation_error)
@@ -1109,22 +1035,6 @@ class ForgeClientPanel(QWidget):
         self.thread.start()
         self.thread.generation_started.connect(self.on_generation_started)
         self.progress_timer.start(1000)
-
-    def apply_parameters_to_loop(self):
-        """スレッドへ次回のループに適用するパラメータを渡す"""
-        try: seed_val = int(self.edit_seed.text().strip())
-        except ValueError: seed_val = -1
-        
-        steps_list = [int(s.strip()) for s in self.edit_steps.text().strip().split(',') if s.strip().isdigit()] or [20]
-        base_payload = {
-            "prompt": self.txt_prompt.toPlainText(), "negative_prompt": self.txt_neg_prompt.toPlainText(),
-            "width": self.spin_width.value(), "height": self.spin_height.value(),
-            "cfg_scale": self.spin_cfg.value(), "sampler_name": self.edit_sampler.text().strip(), "seed": seed_val
-        }
-        
-        # スレッド側の更新メソッドを呼ぶ（前回提示した GenerationThread.update_parameters）
-        self.thread.update_parameters(base_payload, steps_list, self.chk_fixed_seed.isChecked())
-        self.lbl_status.setText("🔄 次の画像から変更されたパラメータを適用します")
 
     def get_preview_seed(self):
         """プレビュー表示中の画像からSeed値を取得して入力欄にセットする"""
@@ -1152,31 +1062,15 @@ class ForgeClientPanel(QWidget):
                 self.progress_bar.setValue(step_val)
         except Exception: pass
 
-    def on_ui_parameter_changed(self):  
-        """UIの値が変更された時に呼ばれる"""
-        # スレッドが動いている（生成ループ中）場合のみボタンを「更新用」に切り替える
-        if self.thread and self.thread.isRunning():
-            self.btn_start.setEnabled(True)
-            self.btn_start.setText("🔄 変更を適用して継続")
-            self.btn_start.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold; padding: 10px;") # 青色にして目立たせる
-
     def stop_loop_only(self):
         if self.thread and self.thread.isRunning(): self.lbl_status.setText("⏹️ 完了次第停止します..."); self.thread.stop_loop_only(); self.btn_stop_loop.setEnabled(False)
     def stop_and_interrupt(self):
         if self.thread and self.thread.isRunning(): self.lbl_status.setText("🛑 キャンセル送信中..."); self.thread.stop_and_interrupt(); self.btn_stop_loop.setEnabled(False); self.btn_interrupt.setEnabled(False)
     def on_image_generated(self, filepath: str, info: str, seed: int): self.preview_label.set_preview_image(filepath); self.progress_bar.setValue(100)
     def on_generation_error(self, err_msg: str): QMessageBox.critical(self, "生成エラー", err_msg); self.on_generation_finished()
-
     def on_generation_finished(self):
-        self.progress_timer.stop()
-        self.progress_bar.setValue(100)
-        self.lbl_status.setText("✨ 生成完了")
-        self.btn_start.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold; padding: 10px;")
-        self.btn_start.setText("▶️ 生成スタート")
-        self.btn_start.setEnabled(True) 
-        self.btn_stop_loop.setEnabled(False)
-        self.btn_interrupt.setEnabled(False)
-
+        self.progress_timer.stop(); self.progress_bar.setValue(100)
+        self.lbl_status.setText("✨ 生成完了"); self.btn_start.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold; padding: 10px;"); self.btn_start.setText("▶️ 生成スタート"); self.btn_start.setEnabled(True); self.btn_stop_loop.setEnabled(False); self.btn_interrupt.setEnabled(False)
     def on_generation_started(self):
         self.progress_bar.setValue(0)
 
