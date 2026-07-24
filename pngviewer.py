@@ -159,6 +159,111 @@ class PromptTextEdit(QTextEdit):
         super().keyPressEvent(event)
 
 
+# class GenerationThread(QThread):
+#     status_updated = Signal(str)
+#     image_generated = Signal(str, str, object)    
+#     finished_all = Signal()
+#     error_occurred = Signal(str)
+#     generation_started = Signal()
+
+#     def __init__(self, tasks: list[dict], interval: int, target_temp: float, target_model: str, output_dir: str, forever_mode: bool, fixed_seed: bool):
+#         super().__init__()
+#         self.tasks, self.interval, self.target_temp, self.target_model, self.output_dir, self.forever_mode = tasks, interval, target_temp, target_model, output_dir, forever_mode
+#         self.fixed_seed = fixed_seed
+#         self.is_running = True
+
+#         self._mutex = QMutex()
+#         self._pending_update = None # 更新待機用の変数
+#         self.has_generated = False  # パラメータ更新時のタイマー継続用
+
+#     def update_parameters(self, base_payload: dict, steps_list: list[int], fixed_seed: bool):
+#         """UIスレッドから呼ばれる：次回のループで適用するパラメータを安全に予約する"""
+#         with QMutexLocker(self._mutex):
+#             self._pending_update = (base_payload, steps_list, fixed_seed)
+
+#     def run(self):
+#         task_idx, total_tasks = 0, len(self.tasks)
+
+#         while self.is_running:
+
+#             # --- [追加] ループの先頭でタスクの更新を検知して切り替える ---
+#             self._mutex.lock()
+#             if self._pending_update:
+#                 base_payload, steps_list, new_fixed_seed = self._pending_update
+#                 self._pending_update = None
+#                 self.fixed_seed = new_fixed_seed
+                
+#                 # ① シード値の引き継ぎ計算（次に使う予定だったシード値を算出）
+#                 idx_in_list = task_idx % total_tasks
+#                 next_seed = self.tasks[idx_in_list]["seed"]
+#                 if task_idx >= total_tasks:
+#                     next_seed += (task_idx // total_tasks) * total_tasks
+                
+#                 # ② 算出したシード値を base_payload に強制上書き
+#                 base_payload["seed"] = next_seed
+                
+#                 # ③ タスクリストを作成し直し、インデックスをリセット
+#                 # ※ create_generation_tasks は外部関数としてアクセスできる前提[cite: 1]
+#                 self.tasks = create_generation_tasks(base_payload, steps_list, 1, self.fixed_seed)
+#                 total_tasks = len(self.tasks)
+#                 task_idx = 0
+#             self._mutex.unlock()
+#             # --------------------------------------------------------
+
+#             idx_in_list = task_idx % total_tasks
+#             task = self.tasks[idx_in_list].copy()
+#             if task_idx >= total_tasks: task["seed"] += (task_idx // total_tasks) * total_tasks
+#             if self.target_model: task["override_settings"] = {"sd_model_checkpoint": self.target_model}
+
+#             #if task_idx > 0 or self.target_temp < 100.0:
+#             if self.has_generated or self.target_temp < 100.0:                
+#                 start_time = time.time()
+#                 while self.is_running:
+#                     elapsed = time.time() - start_time
+#                     #time_ok = (elapsed >= self.interval) if task_idx > 0 else True
+#                     time_ok = (elapsed >= self.interval) if self.has_generated else True
+#                     temp = get_cpu_temperature()
+#                     temp_ok = (temp <= self.target_temp) if temp != -1.0 else True
+#                     temp_str = f"{temp}℃" if temp != -1.0 else "取得不可"
+#                     #rem = max(0, int(self.interval - elapsed)) if task_idx > 0 else 0
+#                     rem = max(0, int(self.interval - elapsed)) if self.has_generated else 0
+#                     mode_str = f" [∞ 無限ループ中 #{task_idx+1}]" if self.forever_mode else f" [{task_idx+1}/{total_tasks}]"
+#                     self.status_updated.emit(f"⏳ 待機中{mode_str} | 残り: {rem}秒 | CPU温度: {temp_str} (目標 <= {self.target_temp}℃)")
+#                     if time_ok and temp_ok: break
+#                     time.sleep(1)
+
+#             if not self.is_running: break
+#             mode_str = f" [∞ 無限モード #{task_idx+1}]" if self.forever_mode else f" [{task_idx+1}/{total_tasks}]"
+#             self.status_updated.emit(f"🎨 画像を生成中...{mode_str} Steps:{task['steps']} / Seed:{task['seed']}")
+#             self.generation_started.emit()
+            
+#             try:
+#                 res = requests.post(f"{FORGE_URL}/sdapi/v1/txt2img", json=task, timeout=300); res.raise_for_status(); result = res.json()
+#                 img_data = base64.b64decode(result["images"][0]); image = Image.open(io.BytesIO(img_data))
+#                 date_str = date.today().strftime("%Y-%m-%d"); date_dir = os.path.join(self.output_dir, date_str); os.makedirs(date_dir, exist_ok=True)
+#                 seq_num = get_next_sequence_number(date_dir); filename = f"{seq_num:05d}-{task['seed']}.png"; filepath = os.path.join(date_dir, filename)
+#                 pnginfo = PngImagePlugin.PngInfo()
+#                 if "info" in result:
+#                     info_dict = json.loads(result["info"]); pnginfo.add_text("parameters", info_dict.get("infotexts", [result["info"]])[0])
+#                 image.save(filepath, pnginfo=pnginfo)
+#                 self.image_generated.emit(filepath, f"Seed: {task['seed']} | Steps: {task['steps']} | Prompt: {task['prompt'][:40]}...", task['seed'])
+#             except Exception as e:
+#                 if self.is_running: self.error_occurred.emit(f"生成エラー: {str(e)}")
+#                 break
+
+#             self.has_generated = True
+
+#             task_idx += 1
+#             if not self.forever_mode and task_idx >= total_tasks: break
+        
+#         self.finished_all.emit()
+
+#     def stop_loop_only(self): self.is_running = False
+#     def stop_and_interrupt(self):
+#         self.is_running = False
+#         try: requests.post(f"{FORGE_URL}/sdapi/v1/interrupt", timeout=2)
+#         except: pass
+
 class GenerationThread(QThread):
     status_updated = Signal(str)
     image_generated = Signal(str, str, object)    
@@ -176,56 +281,46 @@ class GenerationThread(QThread):
         self._pending_update = None # 更新待機用の変数
         self.has_generated = False  # パラメータ更新時のタイマー継続用
 
-    def update_parameters(self, base_payload: dict, steps_list: list[int], fixed_seed: bool):
+    def update_parameters(self, base_payload: dict, steps_list: list[int], fixed_seed: bool, interval: int, target_temp: float):
         """UIスレッドから呼ばれる：次回のループで適用するパラメータを安全に予約する"""
         with QMutexLocker(self._mutex):
-            self._pending_update = (base_payload, steps_list, fixed_seed)
+            self._pending_update = (base_payload, steps_list, fixed_seed, interval, target_temp)
 
     def run(self):
         task_idx, total_tasks = 0, len(self.tasks)
 
         while self.is_running:
-
-            # --- [追加] ループの先頭でタスクの更新を検知して切り替える ---
-            self._mutex.lock()
-            if self._pending_update:
-                base_payload, steps_list, new_fixed_seed = self._pending_update
-                self._pending_update = None
-                self.fixed_seed = new_fixed_seed
-                
-                # ① シード値の引き継ぎ計算（次に使う予定だったシード値を算出）
-                idx_in_list = task_idx % total_tasks
-                next_seed = self.tasks[idx_in_list]["seed"]
-                if task_idx >= total_tasks:
-                    next_seed += (task_idx // total_tasks) * total_tasks
-                
-                # ② 算出したシード値を base_payload に強制上書き
-                base_payload["seed"] = next_seed
-                
-                # ③ タスクリストを作成し直し、インデックスをリセット
-                # ※ create_generation_tasks は外部関数としてアクセスできる前提[cite: 1]
-                self.tasks = create_generation_tasks(base_payload, steps_list, 1, self.fixed_seed)
-                total_tasks = len(self.tasks)
-                task_idx = 0
-            self._mutex.unlock()
-            # --------------------------------------------------------
-
-            idx_in_list = task_idx % total_tasks
-            task = self.tasks[idx_in_list].copy()
-            if task_idx >= total_tasks: task["seed"] += (task_idx // total_tasks) * total_tasks
-            if self.target_model: task["override_settings"] = {"sd_model_checkpoint": self.target_model}
-
-            #if task_idx > 0 or self.target_temp < 100.0:
+            
+            # --- 【修正】1. 先にインターバル・温度の待機処理を行う ---
             if self.has_generated or self.target_temp < 100.0:                
                 start_time = time.time()
                 while self.is_running:
+                    # 待機ループ中にもパラメータ更新を監視し、タスク情報を更新する（UI表示即時反映のため）
+                    self._mutex.lock()
+                    if self._pending_update:
+                        #base_payload, steps_list, new_fixed_seed = self._pending_update
+                        base_payload, steps_list, new_fixed_seed, new_interval, new_target_temp = self._pending_update
+                        self._pending_update = None
+                        self.fixed_seed = new_fixed_seed
+                        self.interval = new_interval
+                        self.target_temp = new_target_temp
+                        
+                        idx_in_list = task_idx % total_tasks
+                        next_seed = self.tasks[idx_in_list]["seed"]
+                        if task_idx >= total_tasks:
+                            next_seed += (task_idx // total_tasks) * total_tasks
+                        
+                        base_payload["seed"] = next_seed
+                        self.tasks = create_generation_tasks(base_payload, steps_list, 1, self.fixed_seed)
+                        total_tasks = len(self.tasks)
+                        task_idx = 0
+                    self._mutex.unlock()
+
                     elapsed = time.time() - start_time
-                    #time_ok = (elapsed >= self.interval) if task_idx > 0 else True
                     time_ok = (elapsed >= self.interval) if self.has_generated else True
                     temp = get_cpu_temperature()
                     temp_ok = (temp <= self.target_temp) if temp != -1.0 else True
                     temp_str = f"{temp}℃" if temp != -1.0 else "取得不可"
-                    #rem = max(0, int(self.interval - elapsed)) if task_idx > 0 else 0
                     rem = max(0, int(self.interval - elapsed)) if self.has_generated else 0
                     mode_str = f" [∞ 無限ループ中 #{task_idx+1}]" if self.forever_mode else f" [{task_idx+1}/{total_tasks}]"
                     self.status_updated.emit(f"⏳ 待機中{mode_str} | 残り: {rem}秒 | CPU温度: {temp_str} (目標 <= {self.target_temp}℃)")
@@ -233,6 +328,32 @@ class GenerationThread(QThread):
                     time.sleep(1)
 
             if not self.is_running: break
+
+            # --- 【修正】2. 待機をスキップした場合に備え、生成直前にもタスクの更新を検知して切り替える ---
+            self._mutex.lock()
+            if self._pending_update:
+                base_payload, steps_list, new_fixed_seed = self._pending_update
+                self._pending_update = None
+                self.fixed_seed = new_fixed_seed
+                
+                idx_in_list = task_idx % total_tasks
+                next_seed = self.tasks[idx_in_list]["seed"]
+                if task_idx >= total_tasks:
+                    next_seed += (task_idx // total_tasks) * total_tasks
+                
+                base_payload["seed"] = next_seed
+                self.tasks = create_generation_tasks(base_payload, steps_list, 1, self.fixed_seed)
+                total_tasks = len(self.tasks)
+                task_idx = 0
+            self._mutex.unlock()
+            
+            # --- 【修正】3. 最新のタスク情報を取得 ---
+            idx_in_list = task_idx % total_tasks
+            task = self.tasks[idx_in_list].copy()
+            if task_idx >= total_tasks: task["seed"] += (task_idx // total_tasks) * total_tasks
+            if self.target_model: task["override_settings"] = {"sd_model_checkpoint": self.target_model}
+
+            # --- 4. 生成処理を実行 ---
             mode_str = f" [∞ 無限モード #{task_idx+1}]" if self.forever_mode else f" [{task_idx+1}/{total_tasks}]"
             self.status_updated.emit(f"🎨 画像を生成中...{mode_str} Steps:{task['steps']} / Seed:{task['seed']}")
             self.generation_started.emit()
@@ -1003,6 +1124,8 @@ class ForgeClientPanel(QWidget):
         self.edit_seed.textChanged.connect(self.on_ui_parameter_changed)
         self.chk_fixed_seed.stateChanged.connect(self.on_ui_parameter_changed)
         self.combo_model.currentIndexChanged.connect(self.on_ui_parameter_changed)        
+        self.spin_interval.valueChanged.connect(self.on_ui_parameter_changed)
+        self.spin_temp.valueChanged.connect(self.on_ui_parameter_changed)        
 
     def browse_output_dir(self):
         if d := QFileDialog.getExistingDirectory(self, "保存先フォルダの選択", self.edit_out_dir.text()):
@@ -1123,7 +1246,13 @@ class ForgeClientPanel(QWidget):
         }
         
         # スレッド側の更新メソッドを呼ぶ（前回提示した GenerationThread.update_parameters）
-        self.thread.update_parameters(base_payload, steps_list, self.chk_fixed_seed.isChecked())
+        self.thread.update_parameters(
+            base_payload,
+            steps_list,
+            self.chk_fixed_seed.isChecked(),
+            self.spin_interval.value(),
+            self.spin_temp.value()
+        )
         self.lbl_status.setText("🔄 次の画像から変更されたパラメータを適用します")
 
     def get_preview_seed(self):
