@@ -332,9 +332,12 @@ class GenerationThread(QThread):
             # --- 【修正】2. 待機をスキップした場合に備え、生成直前にもタスクの更新を検知して切り替える ---
             self._mutex.lock()
             if self._pending_update:
-                base_payload, steps_list, new_fixed_seed = self._pending_update
+                #base_payload, steps_list, new_fixed_seed = self._pending_update
+                base_payload, steps_list, new_fixed_seed, new_interval, new_target_temp = self._pending_update
                 self._pending_update = None
                 self.fixed_seed = new_fixed_seed
+                self.interval = new_interval
+                self.target_temp = new_target_temp
                 
                 idx_in_list = task_idx % total_tasks
                 next_seed = self.tasks[idx_in_list]["seed"]
