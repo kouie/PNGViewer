@@ -473,36 +473,140 @@ class ViewerDraggableLabel(DraggableImageLabel):
 # UIヘルパー（メタデータラベル、ダイアログ、コレクション等）
 # =====================================================================
 
+# class MetadataLabel(QLabel):
+#     r_button_clicked = Signal()
+#     send_single_to_forge = Signal(str, str, bool)
+#     send_all_to_forge = Signal(bool)
+
+#     def __init__(self, label="", value="", parent=None):
+#         super().__init__(parent); self.label, self.value = label, value; self.setFont(QFont('SansSerif', 11)); self.setTextFormat(Qt.TextFormat.RichText); self.setWordWrap(True); self.update_text(); self.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+#     def update_text(self, highlight=False):
+#         if highlight: self.setText(f"<b>{self.label}:</b> <span style='background-color: #FFEB3B'>{self.value}</span>")
+#         else: self.setText(f"<b>{self.label}:</b> {self.value.replace(chr(10), '<br>')}")
+#     def apply_highlight(self, words_to_highlight, color):
+#         all_text = self.value 
+#         for word in words_to_highlight: all_text = all_text.replace(word, f'<span style="background-color: {color};">{word}</span>')
+#         self.setText(f"<b>{self.label}:</b> {all_text.replace(chr(10), '<br>')}")
+#     def contextMenuEvent(self, event):
+#         menu = QMenu(self)
+#         copyAction = menu.addAction("コピー"); copyAction.triggered.connect(self.copy)
+#         selectAllAction = menu.addAction("パラメータの値をコピー"); selectAllAction.triggered.connect(self.selectAll)
+#         menu.addSeparator()
+
+#         # sendAction = menu.addAction("👉 このパラメータを生成パネルにセット"); sendAction.triggered.connect(lambda: self.send_single_to_forge.emit(self.label, self.value, False))
+#         # sendGenAction = menu.addAction("🚀 このパラメータをセットして生成スタート"); sendGenAction.triggered.connect(lambda: self.send_single_to_forge.emit(self.label, self.value, True))
+#         # menu.addSeparator()
+#         # sendAllAction = menu.addAction("👉 全パラメータを生成パネルにセット"); sendAllAction.triggered.connect(lambda: self.send_all_to_forge.emit(False))
+#         # sendAllGenAction = menu.addAction("🚀 全パラメータをセットして生成スタート"); sendAllGenAction.triggered.connect(lambda: self.send_all_to_forge.emit(True))
+#         # menu.addSeparator()
+
+#         gen_submenu= menu.addMenu("生成オプション")
+#         sendAction = gen_submenu.addAction("👉 このパラメータを生成パネルにセット")
+#         sendAction.triggered.connect(lambda: self.send_single_to_forge.emit(self.label, self.value, False))
+#         sendGenAction = gen_submenu.addAction("🚀 このパラメータをセットして生成スタート")
+#         sendGenAction.triggered.connect(lambda: self.send_single_to_forge.emit(self.label, self.value, True))
+#         gen_submenu.addSeparator()
+#         sendAllAction = gen_submenu.addAction("👉 全パラメータを生成パネルにセット")
+#         sendAllAction.triggered.connect(lambda: self.send_all_to_forge.emit(False))
+#         sendAllGenAction = gen_submenu.addAction("🚀 全パラメータをセットして生成スタート")
+#         sendAllGenAction.triggered.connect(lambda: self.send_all_to_forge.emit(True))
+#         menu.addSeparator()
+
+
+#         customAction = menu.addAction("表示するパラメータを選択..."); customAction.triggered.connect(self.on_r_mouse_clicked); menu.exec(event.globalPos())
+#     def on_r_mouse_clicked(self): self.r_button_clicked.emit()
+#     def copy(self): QGuiApplication.clipboard().setText(self.selectedText())
+#     def selectAll(self): QGuiApplication.clipboard().setText(self.value)
+
 class MetadataLabel(QLabel):
     r_button_clicked = Signal()
     send_single_to_forge = Signal(str, str, bool)
     send_all_to_forge = Signal(bool)
 
     def __init__(self, label="", value="", parent=None):
-        super().__init__(parent); self.label, self.value = label, value; self.setFont(QFont('SansSerif', 11)); self.setTextFormat(Qt.TextFormat.RichText); self.setWordWrap(True); self.update_text(); self.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        super().__init__(parent)
+        self.label = label
+        self.value = value
+        self.setFont(QFont('SansSerif', 11))
+        self.setTextFormat(Qt.TextFormat.RichText)
+        self.setWordWrap(True)
+        self.update_text()
+        self.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+
+        # 【追加】右クリックメニューを開いてフォーカスが外れた際も、
+        # 選択部分のハイライトカラー（青など）を維持するための処理
+        palette = self.palette()
+        palette.setColor(
+            palette.ColorGroup.Inactive, 
+            palette.ColorRole.Highlight, 
+            palette.color(palette.ColorGroup.Active, palette.ColorRole.Highlight)
+        )
+        palette.setColor(
+            palette.ColorGroup.Inactive, 
+            palette.ColorRole.HighlightedText, 
+            palette.color(palette.ColorGroup.Active, palette.ColorRole.HighlightedText)
+        )
+        self.setPalette(palette)
+
+    # 【追加】右クリック時にテキスト選択が外れるのを防ぐ
+    def mousePressEvent(self, event):
+        # PySide6(Qt6)での厳格なEnum指定に対応
+        if event.button() == Qt.MouseButton.RightButton:
+            # 右クリック時はカーソル移動や選択解除を行わせないため、即座にリターン
+            return
+        
+        # 左クリックなどは通常通り親クラスに処理させる
+        super().mousePressEvent(event)
+
     def update_text(self, highlight=False):
-        if highlight: self.setText(f"<b>{self.label}:</b> <span style='background-color: #FFEB3B'>{self.value}</span>")
-        else: self.setText(f"<b>{self.label}:</b> {self.value.replace(chr(10), '<br>')}")
+        if highlight:
+            self.setText(f"<b>{self.label}:</b> <span style='background-color: #FFEB3B'>{self.value}</span>")
+        else:
+            self.setText(f"<b>{self.label}:</b> {self.value.replace(chr(10), '<br>')}")
+
     def apply_highlight(self, words_to_highlight, color):
         all_text = self.value 
-        for word in words_to_highlight: all_text = all_text.replace(word, f'<span style="background-color: {color};">{word}</span>')
+        for word in words_to_highlight:
+            if not word:
+                continue
+            # 大文字小文字を無視してハイライトするため正規表現を使用
+            pattern = re.compile(re.escape(word), re.IGNORECASE)
+            # マッチした元の文字列を維持してタグで囲む
+            all_text = pattern.sub(lambda m: f'<span style="background-color: {color};">{m.group(0)}</span>', all_text)
+            
         self.setText(f"<b>{self.label}:</b> {all_text.replace(chr(10), '<br>')}")
-    def contextMenuEvent(self, event):
-        menu = QMenu(self)
-        copyAction = menu.addAction("コピー"); copyAction.triggered.connect(self.copy)
-        selectAllAction = menu.addAction("パラメータの値をコピー"); selectAllAction.triggered.connect(self.selectAll)
-        menu.addSeparator()
-        sendAction = menu.addAction("👉 このパラメータを生成パネルにセット"); sendAction.triggered.connect(lambda: self.send_single_to_forge.emit(self.label, self.value, False))
-        sendGenAction = menu.addAction("🚀 このパラメータをセットして生成スタート"); sendGenAction.triggered.connect(lambda: self.send_single_to_forge.emit(self.label, self.value, True))
-        menu.addSeparator()
-        sendAllAction = menu.addAction("👉 この画像の全パラメータをセット"); sendAllAction.triggered.connect(lambda: self.send_all_to_forge.emit(False))
-        sendAllGenAction = menu.addAction("🚀 全パラメータをセットして生成スタート"); sendAllGenAction.triggered.connect(lambda: self.send_all_to_forge.emit(True))
-        menu.addSeparator()
-        customAction = menu.addAction("表示するパラメータを選択..."); customAction.triggered.connect(self.on_r_mouse_clicked); menu.exec(event.globalPos())
-    def on_r_mouse_clicked(self): self.r_button_clicked.emit()
-    def copy(self): QGuiApplication.clipboard().setText(self.selectedText())
-    def selectAll(self): QGuiApplication.clipboard().setText(self.value)
 
+    def contextMenuEvent(self, event):
+        # 既存のメニュー処理そのまま
+        menu = QMenu(self)
+        copyAction = menu.addAction("コピー")
+        copyAction.triggered.connect(self.copy)
+        selectAllAction = menu.addAction("パラメータの値をコピー")
+        selectAllAction.triggered.connect(self.selectAll)
+        menu.addSeparator()
+
+        gen_submenu= menu.addMenu("生成オプション")
+        sendAction = gen_submenu.addAction("👉 このパラメータを生成パネルにセット")
+        sendAction.triggered.connect(lambda: self.send_single_to_forge.emit(self.label, self.value, False))
+        sendGenAction = gen_submenu.addAction("🚀 このパラメータをセットして生成スタート")
+        sendGenAction.triggered.connect(lambda: self.send_single_to_forge.emit(self.label, self.value, True))
+        gen_submenu.addSeparator()
+        sendAllAction = gen_submenu.addAction("👉 全パラメータを生成パネルにセット")
+        sendAllAction.triggered.connect(lambda: self.send_all_to_forge.emit(False))
+        sendAllGenAction = gen_submenu.addAction("🚀 全パラメータをセットして生成スタート")
+        sendAllGenAction.triggered.connect(lambda: self.send_all_to_forge.emit(True))
+        menu.addSeparator()
+
+        customAction = menu.addAction("表示するパラメータを選択...")
+        customAction.triggered.connect(self.on_r_mouse_clicked)
+        menu.exec(event.globalPos())
+
+    def on_r_mouse_clicked(self):
+        self.r_button_clicked.emit()
+    def copy(self):
+        QGuiApplication.clipboard().setText(self.selectedText())
+    def selectAll(self):
+        QGuiApplication.clipboard().setText(self.value)
 
 class CheckableListDialog(QDialog):
     def __init__(self, items, parent=None):
@@ -745,6 +849,7 @@ class ImageView(QWidget):
     metaarea_changed = Signal()
     send_all_to_forge = Signal(dict, bool)
     send_single_to_forge = Signal(str, str, bool)
+    highlight_toggled = Signal()
 
     def __init__(self, set_id, parent=None):
         super().__init__(parent)        
@@ -773,32 +878,71 @@ class ImageView(QWidget):
         self.image_label.installEventFilter(self); self.container.setAcceptDrops(True); self.container.installEventFilter(self)
         self.open_button.new_folder.connect(self.on_new_folder); self.original_views = [] 
 
+    # def setup_toolbar(self):
+    #     toolbar = QHBoxLayout()
+    #     self.open_button = OpenNavigationButton(); self.open_button.setText("Open"); self.open_button.setFixedWidth(50); toolbar.addWidget(self.open_button)
+    #     copy_seed_button = QPushButton("Copy"); copy_seed_button.clicked.connect(self.copy_seed); copy_seed_button.setFixedWidth(45); toolbar.addWidget(copy_seed_button)
+    #     #self.chk_desc = QCheckBox("降順"); self.chk_desc.stateChanged.connect(self.refresh_folder_view); toolbar.addWidget(self.chk_desc)
+        
+    #     # 1350px壁解決策③：比較画面でも突っ張らないようテキストボックスの最小幅を柔軟(80px)に設定
+    #     self.text_box = QLineEdit(); self.text_box.setMinimumWidth(80); self.text_box.setPlaceholderText("Filter ( - : neg prompt)"); self.text_box.setClearButtonEnabled(True); self.text_box.editingFinished.connect(self.text_entered); toolbar.addWidget(self.text_box)
+        
+    #     toolbar.addStretch()
+    #     self.lbl_page = QLabel("0/0"); self.lbl_page.setFont(QFont('SansSerif', 10, QFont.Weight.Bold)); self.lbl_page.setMinimumWidth(65); self.lbl_page.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter); toolbar.addWidget(self.lbl_page)
+
+    #     self.combo_sort = NoWheelComboBox()
+    #     self.combo_sort.addItems(["日付順", "名前順"])
+    #     self.combo_sort.currentIndexChanged.connect(self.refresh_folder_view)
+    #     toolbar.addWidget(self.combo_sort)
+
+    #     self.open_collection_button = QPushButton("CL"); self.open_collection_button.setFixedWidth(35); toolbar.addWidget(self.open_collection_button)
+
+    #     return toolbar        
+
     def setup_toolbar(self):
         toolbar = QHBoxLayout()
-        self.open_button = OpenNavigationButton(); self.open_button.setText("Open"); self.open_button.setFixedWidth(50); toolbar.addWidget(self.open_button)
-        copy_seed_button = QPushButton("Copy"); copy_seed_button.clicked.connect(self.copy_seed); copy_seed_button.setFixedWidth(45); toolbar.addWidget(copy_seed_button)
-        #self.chk_desc = QCheckBox("降順"); self.chk_desc.stateChanged.connect(self.refresh_folder_view); toolbar.addWidget(self.chk_desc)
+        self.open_button = OpenNavigationButton()
+        self.open_button.setText("Open")
+        self.open_button.setFixedWidth(50)
+        toolbar.addWidget(self.open_button)
         
-        # 1350px壁解決策③：比較画面でも突っ張らないようテキストボックスの最小幅を柔軟(80px)に設定
-        self.text_box = QLineEdit(); self.text_box.setMinimumWidth(80); self.text_box.setPlaceholderText("Filter ( - : neg prompt)"); self.text_box.setClearButtonEnabled(True); self.text_box.editingFinished.connect(self.text_entered); toolbar.addWidget(self.text_box)
+        copy_seed_button = QPushButton("Copy")
+        copy_seed_button.clicked.connect(self.copy_seed)
+        copy_seed_button.setFixedWidth(45)
+        toolbar.addWidget(copy_seed_button)
+        
+        self.text_box = QLineEdit()
+        self.text_box.setMinimumWidth(80)
+        self.text_box.setPlaceholderText("Filter ( - : neg prompt)")
+        self.text_box.setClearButtonEnabled(True)
+        self.text_box.editingFinished.connect(self.text_entered)
+        toolbar.addWidget(self.text_box)
+        
+        # ★追加：ハイライト用チェックボックス
+        self.chk_highlight = QCheckBox("HL")
+        self.chk_highlight.setToolTip("プロンプト内の検索ワードをハイライト表示します")
+        self.chk_highlight.setEnabled(False)
+        self.chk_highlight.stateChanged.connect(self.on_highlight_changed)
+        toolbar.addWidget(self.chk_highlight)
         
         toolbar.addStretch()
-        self.lbl_page = QLabel("0/0"); self.lbl_page.setFont(QFont('SansSerif', 10, QFont.Weight.Bold)); self.lbl_page.setMinimumWidth(65); self.lbl_page.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter); toolbar.addWidget(self.lbl_page)
+        
+        self.lbl_page = QLabel("0/0")
+        self.lbl_page.setFont(QFont('SansSerif', 10, QFont.Weight.Bold))
+        self.lbl_page.setMinimumWidth(65)
+        self.lbl_page.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        toolbar.addWidget(self.lbl_page)
 
         self.combo_sort = NoWheelComboBox()
         self.combo_sort.addItems(["日付順", "名前順"])
         self.combo_sort.currentIndexChanged.connect(self.refresh_folder_view)
         toolbar.addWidget(self.combo_sort)
 
-        self.open_collection_button = QPushButton("CL"); self.open_collection_button.setFixedWidth(35); toolbar.addWidget(self.open_collection_button)
+        self.open_collection_button = QPushButton("CL")
+        self.open_collection_button.setFixedWidth(35)
+        toolbar.addWidget(self.open_collection_button)
 
-        self.open_button.setStyleSheet("""
-            QPushButton {
-                background-color: #555555; color: white; font-weight: bold; padding: 5px;
-            }
-        """)
-
-        return toolbar        
+        return toolbar    
 
     def get_sorted_image_files(self, apply_filter=False):
         if not self.current_folder or not os.path.exists(self.current_folder): return []
@@ -814,14 +958,45 @@ class ImageView(QWidget):
         files.sort(key=lambda f: os.path.getmtime(os.path.join(self.current_folder, f)) if self.combo_sort.currentIndex() == 0 else f.lower(), reverse=False)
         return files
 
+    # def refresh_folder_view(self):
+    #     #if self.current_folder and (files := self.get_sorted_image_files(apply_filter=self.slider_popup.chk_filter.isChecked())):
+    #     files = self.get_sorted_image_files(True)
+    #     if files:
+    #         current_name = os.path.basename(self.current_image_path)
+    #         if current_name in files: self.current_index = files.index(current_name)
+    #         else: self.current_index = 0; self.load_image(os.path.join(self.current_folder, files[0]))
+    #         self.update_page_display(len(files))
+
+    # ★追加：チェックボックスの有効/無効を更新するメソッド
+    def update_highlight_checkbox_state(self):
+        query = self.text_box.text().strip()
+        files = self.get_sorted_image_files(apply_filter=True)
+        # 検索ワードが存在し、フィルタ結果にファイルが1つ以上ある場合のみ有効化
+        if query and len(files) > 0:
+            self.chk_highlight.setEnabled(True)
+        else:
+            self.chk_highlight.setChecked(False)
+            self.chk_highlight.setEnabled(False)
+
+    # ★追加：チェックボックスが操作されたときの処理
+    def on_highlight_changed(self):
+        if self.metadata:
+            self.display_metadata(self.metadata)
+        self.highlight_toggled.emit()
+
     def refresh_folder_view(self):
-        #if self.current_folder and (files := self.get_sorted_image_files(apply_filter=self.slider_popup.chk_filter.isChecked())):
         files = self.get_sorted_image_files(True)
         if files:
             current_name = os.path.basename(self.current_image_path)
-            if current_name in files: self.current_index = files.index(current_name)
-            else: self.current_index = 0; self.load_image(os.path.join(self.current_folder, files[0]))
+            if current_name in files:
+                self.current_index = files.index(current_name)
+            else:
+                self.current_index = 0
+                self.load_image(os.path.join(self.current_folder, files[0]))
             self.update_page_display(len(files))
+            
+        # ★追加
+        self.update_highlight_checkbox_state()
 
     def update_page_display(self, total_files=None):
         #if total_files is None: total_files = len(self.get_sorted_image_files(apply_filter=self.slider_popup.chk_filter.isChecked()))
@@ -836,14 +1011,24 @@ class ImageView(QWidget):
     def show_tagSelection_ContextMenu(self, position):
         menu = QMenu()
         if self.metadata:
-            sendAllAction = menu.addAction("👉 この画像の全パラメータをセット")
+            # sendAllAction = menu.addAction("👉 この画像の全パラメータをセット")
+            # sendAllAction.triggered.connect(lambda: self.send_all_to_forge.emit(self.metadata, False))
+            # sendAllGenAction = menu.addAction("🚀 全パラメータをセットして生成スタート")
+            # sendAllGenAction.triggered.connect(lambda: self.send_all_to_forge.emit(self.metadata, True))
+            # menu.addSeparator()
+
+            gen_submenu = menu.addMenu("生成オプション")
+            sendAllAction = gen_submenu.addAction("👉 この画像の全パラメータをセット")
             sendAllAction.triggered.connect(lambda: self.send_all_to_forge.emit(self.metadata, False))
-            sendAllGenAction = menu.addAction("🚀 全パラメータをセットして生成スタート")
+            sendAllGenAction = gen_submenu.addAction("🚀 全パラメータをセットして生成スタート")
             sendAllGenAction.triggered.connect(lambda: self.send_all_to_forge.emit(self.metadata, True))
             menu.addSeparator()
-            
-        selectAction = QAction("表示するパラメータを選択...", self); selectAction.triggered.connect(self.selectItems); menu.addAction(selectAction)
-        menu.exec(self.metadata_widget.mapToGlobal(position))
+
+        selectAction = QAction("表示するパラメータを選択...", self)
+        selectAction.triggered.connect(self.selectItems)
+        menu.addAction(selectAction)
+        #menu.exec(self.metadata_widget.mapToGlobal(position))
+        menu.exec(QCursor.pos())
 
     def on_slider_value_changed(self, index):
         if 0 <= index < len(self.slider_popup.image_files):
@@ -902,44 +1087,117 @@ class ImageView(QWidget):
             if child.widget(): child.widget().deleteLater()
         self.lbl_page.setText("0/0")
 
+    # def change_image(self, event):
+    #     if not self.current_folder: return
+    #     #if self.slider_popup.chk_filter.isChecked():
+    #     if 0:
+    #         if not (files := self.get_sorted_image_files(apply_filter=True)): return
+    #         current_idx = files.index(os.path.basename(self.current_image_path)) if os.path.basename(self.current_image_path) in files else 0
+    #         self.load_image(os.path.join(self.current_folder, files[(current_idx + (-1 if event.angleDelta().y() > 0 else 1)) % len(files)]))
+    #     else:
+    #         if not (files := self.get_sorted_image_files(apply_filter=True)): return
+    #         current_idx = files.index(os.path.basename(self.current_image_path)) if os.path.basename(self.current_image_path) in files else 0
+    #         new_idx = (current_idx + (-1 if event.angleDelta().y() > 0 else 1)) % len(files)
+    #         if self.text_box.text().strip():
+    #             query = self.text_box.text().strip(); is_neg = query.startswith("-"); pattern_str = query[1:].strip() if is_neg else query
+    #             if pattern_str:
+    #                 try:
+    #                     regex = re.compile(pattern_str, re.IGNORECASE)
+    #                     for _ in range(len(files)):
+    #                         if regex.search(self.extract_png_metadata(os.path.join(self.current_folder, files[new_idx])).get("Negative prompt" if is_neg else "Prompt", "")):
+    #                             self.load_image(os.path.join(self.current_folder, files[new_idx])); self.refresh_folder_view(); return
+    #                         new_idx = (new_idx + (-1 if event.angleDelta().y() > 0 else 1)) % len(files)
+    #                     return
+    #                 except re.error: pass
+    #         self.load_image(os.path.join(self.current_folder, files[new_idx]))
+
+
     def change_image(self, event):
-        if not self.current_folder: return
-        #if self.slider_popup.chk_filter.isChecked():
-        if 0:
-            if not (files := self.get_sorted_image_files(apply_filter=True)): return
-            current_idx = files.index(os.path.basename(self.current_image_path)) if os.path.basename(self.current_image_path) in files else 0
-            self.load_image(os.path.join(self.current_folder, files[(current_idx + (-1 if event.angleDelta().y() > 0 else 1)) % len(files)]))
+        if not self.current_folder:
+            return
+
+        if not (files := self.get_sorted_image_files(apply_filter=True)):
+            return
+
+        current_idx = files.index(os.path.basename(self.current_image_path)) if os.path.basename(self.current_image_path) in files else 0
+        new_idx = (current_idx + (-1 if event.angleDelta().y() > 0 else 1)) % len(files)
+        if self.text_box.text().strip():
+            query = self.text_box.text().strip()
+            is_neg = query.startswith("-")
+            pattern_str = query[1:].strip() if is_neg else query
+            if pattern_str:
+                try:
+                    regex = re.compile(pattern_str, re.IGNORECASE)
+                    for _ in range(len(files)):
+                        if regex.search(self.extract_png_metadata(os.path.join(self.current_folder, files[new_idx])).get("Negative prompt" if is_neg else "Prompt", "")):
+                            self.load_image(os.path.join(self.current_folder, files[new_idx]))
+                            self.refresh_folder_view(); return
+                        new_idx = (new_idx + (-1 if event.angleDelta().y() > 0 else 1)) % len(files)
+                    return
+                except re.error: pass
         else:
-            if not (files := self.get_sorted_image_files(apply_filter=True)): return
-            current_idx = files.index(os.path.basename(self.current_image_path)) if os.path.basename(self.current_image_path) in files else 0
-            new_idx = (current_idx + (-1 if event.angleDelta().y() > 0 else 1)) % len(files)
-            if self.text_box.text().strip():
-                query = self.text_box.text().strip(); is_neg = query.startswith("-"); pattern_str = query[1:].strip() if is_neg else query
-                if pattern_str:
-                    try:
-                        regex = re.compile(pattern_str, re.IGNORECASE)
-                        for _ in range(len(files)):
-                            if regex.search(self.extract_png_metadata(os.path.join(self.current_folder, files[new_idx])).get("Negative prompt" if is_neg else "Prompt", "")):
-                                self.load_image(os.path.join(self.current_folder, files[new_idx])); self.refresh_folder_view(); return
-                            new_idx = (new_idx + (-1 if event.angleDelta().y() > 0 else 1)) % len(files)
-                        return
-                    except re.error: pass
-            self.load_image(os.path.join(self.current_folder, files[new_idx]))
+            self.update_highlight_checkbox_state()
+        self.load_image(os.path.join(self.current_folder, files[new_idx]))
+#        if not self.text_box.text().strip():
+#            self.refresh_folder_view()
+
+    # def text_entered(self):
+    #     if not self.current_folder or not (files := self.get_sorted_image_files(apply_filter=False)): return
+    #     current_idx = files.index(os.path.basename(self.current_image_path)) if os.path.basename(self.current_image_path) in files else 0
+    #     if not (query := self.text_box.text().strip()): self.refresh_folder_view(); return
+    #     is_neg = query.startswith("-"); pattern_str = query[1:].strip() if is_neg else query
+    #     if pattern_str:
+    #         try:
+    #             regex = re.compile(pattern_str, re.IGNORECASE)
+    #             for _ in range(len(files)):
+    #                 if regex.search(self.extract_png_metadata(os.path.join(self.current_folder, files[current_idx])).get("Negative prompt" if is_neg else "Prompt", "")):
+    #                     self.load_image(os.path.join(self.current_folder, files[current_idx])); self.refresh_folder_view(); return
+    #                 current_idx = (current_idx + 1) % len(files)
+    #             self.clear_view_area("No matching images found")
+    #         except re.error: pass
 
     def text_entered(self):
-        if not self.current_folder or not (files := self.get_sorted_image_files(apply_filter=False)): return
-        current_idx = files.index(os.path.basename(self.current_image_path)) if os.path.basename(self.current_image_path) in files else 0
-        if not (query := self.text_box.text().strip()): self.refresh_folder_view(); return
-        is_neg = query.startswith("-"); pattern_str = query[1:].strip() if is_neg else query
+        if not self.current_folder:
+            return
+            
+        files = self.get_sorted_image_files(apply_filter=False)
+        if not files:
+            return
+            
+        current_name = os.path.basename(self.current_image_path)
+        current_idx = files.index(current_name) if current_name in files else 0
+        
+        query = self.text_box.text().strip()
+        if not query:
+            self.refresh_folder_view()
+            self.update_highlight_checkbox_state() # ★追加
+            return
+            
+        is_neg = query.startswith("-")
+        pattern_str = query[1:].strip() if is_neg else query
+        
         if pattern_str:
             try:
                 regex = re.compile(pattern_str, re.IGNORECASE)
+                match_found = False
                 for _ in range(len(files)):
-                    if regex.search(self.extract_png_metadata(os.path.join(self.current_folder, files[current_idx])).get("Negative prompt" if is_neg else "Prompt", "")):
-                        self.load_image(os.path.join(self.current_folder, files[current_idx])); self.refresh_folder_view(); return
+                    meta = self.extract_png_metadata(os.path.join(self.current_folder, files[current_idx]))
+                    target_prompt = meta.get("Negative prompt" if is_neg else "Prompt", "")
+                    
+                    if regex.search(target_prompt):
+                        self.load_image(os.path.join(self.current_folder, files[current_idx]))
+                        self.refresh_folder_view()
+                        match_found = True
+                        break
+                        
                     current_idx = (current_idx + 1) % len(files)
-                self.clear_view_area("No matching images found")
-            except re.error: pass
+                    
+                if not match_found:
+                    self.clear_view_area("No matching images found")
+            except re.error:
+                pass
+                
+        self.update_highlight_checkbox_state() # ★追加
 
     def parse_metadata(self, text):
         metadata = {}; neg_prompt_index = text.find("Negative prompt:")
@@ -973,17 +1231,51 @@ class ImageView(QWidget):
         except Exception: pass
         return {}
             
+    # def display_metadata(self, metadata, clear=True):
+    #     if clear:
+    #         while child := self.metadata_layout.takeAt(0):
+    #             if child.widget(): child.widget().deleteLater()
+    #     for key in self.meta_tags:
+    #         if key in metadata:
+    #             label = MetadataLabel(key, metadata[key])
+    #             self.metadata_layout.addWidget(label)
+    #             label.r_button_clicked.connect(self.selectItems)
+    #             label.send_single_to_forge.connect(self.send_single_to_forge.emit)
+    #             label.send_all_to_forge.connect(lambda auto: self.send_all_to_forge.emit(self.metadata, auto))
+    #     self.metadata_layout.insertWidget(0, MetadataLabel("File", self.current_image_path.replace("\\", "/")))
+    #     self.metadata_layout.addStretch()
+
+    # 既存の display_metadata を修正し、ハイライト処理を追加
     def display_metadata(self, metadata, clear=True):
         if clear:
             while child := self.metadata_layout.takeAt(0):
-                if child.widget(): child.widget().deleteLater()
+                if child.widget():
+                    child.widget().deleteLater()
+                    
+        # ★追加：ハイライトするワードの判定
+        highlight_word = ""
+        is_neg = False
+        if self.chk_highlight.isChecked():
+            query = self.text_box.text().strip()
+            is_neg = query.startswith("-")
+            highlight_word = query[1:].strip() if is_neg else query
+
         for key in self.meta_tags:
             if key in metadata:
                 label = MetadataLabel(key, metadata[key])
                 self.metadata_layout.addWidget(label)
                 label.r_button_clicked.connect(self.selectItems)
                 label.send_single_to_forge.connect(self.send_single_to_forge.emit)
-                label.send_all_to_forge.connect(lambda auto: self.send_all_to_forge.emit(self.metadata, auto))
+                
+                # lambdaの遅延評価バグを防ぐため m=metadata を指定
+                label.send_all_to_forge.connect(lambda auto, m=metadata: self.send_all_to_forge.emit(m, auto))
+                
+                # ★追加：チェックが入っている場合、該当のプロンプトをハイライト
+                if highlight_word:
+                    target_key = "Negative prompt" if is_neg else "Prompt"
+                    if key == target_key:
+                        label.apply_highlight([highlight_word], "#ff99ff")
+
         self.metadata_layout.insertWidget(0, MetadataLabel("File", self.current_image_path.replace("\\", "/")))
         self.metadata_layout.addStretch()
 
@@ -1324,7 +1616,6 @@ class ImageViewer(QMainWindow):
         self.resize(850, 900)
         self.panel_default_width = 500
         
-        # 1350px壁解決策①：開く前のウィンドウサイズを記憶するための変数
         self.saved_viewer_width = None
         
         self.central_widget = QWidget(); self.setCentralWidget(self.central_widget)
@@ -1338,14 +1629,50 @@ class ImageViewer(QMainWindow):
         send_button.clicked.connect(partial(self.send_to, 0, 1)); send_button.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu); send_button.customContextMenuRequested.connect(self.show_send_context_menu)
         layout_s.addWidget(self.m_view.container); self.tab_widget.addTab(self.s_view, "シングル")
 
-        self.c_view = QWidget(); layout_c = QHBoxLayout(self.c_view)
-        self.l_view = ImageView(1); self.r_view = ImageView(2)
-        send_button1 = QPushButton("←"); send_button1.setFixedWidth(30); self.l_view.toolbar.addWidget(send_button1); send_button1.clicked.connect(partial(self.send_to, 1, 0)); send_button1.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu); send_button1.customContextMenuRequested.connect(self.show_send_context_menu); layout_c.addWidget(self.l_view.container)
-        send_button2 = QPushButton("←←"); send_button2.setFixedWidth(30); self.r_view.toolbar.addWidget(send_button2); send_button2.clicked.connect(partial(self.send_to, 2, 0)); send_button2.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu); send_button2.customContextMenuRequested.connect(self.show_send_context_menu); layout_c.addWidget(self.r_view.container)
+        # self.c_view = QWidget(); layout_c = QHBoxLayout(self.c_view)
+        # self.l_view = ImageView(1); self.r_view = ImageView(2)
+        # send_button1 = QPushButton("←"); send_button1.setFixedWidth(30); self.l_view.toolbar.addWidget(send_button1); send_button1.clicked.connect(partial(self.send_to, 1, 0)); send_button1.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu); send_button1.customContextMenuRequested.connect(self.show_send_context_menu); layout_c.addWidget(self.l_view.container)
+        # send_button2 = QPushButton("←←"); send_button2.setFixedWidth(30); self.r_view.toolbar.addWidget(send_button2); send_button2.clicked.connect(partial(self.send_to, 2, 0)); send_button2.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu); send_button2.customContextMenuRequested.connect(self.show_send_context_menu); layout_c.addWidget(self.r_view.container)
+
+        # self.collection_windows, self.collection_idx = [], 0
+        # self.l_view.image_loaded.connect(self.compare_metadata); self.r_view.image_loaded.connect(self.compare_metadata); self.l_view.metaarea_changed.connect(self.compare_metadata); self.r_view.metaarea_changed.connect(self.compare_metadata)
+        # self.tab_widget.addTab(self.c_view, "比較"); self.tab_widget.currentChanged.connect(self.on_tab_changed)
+
+        self.c_view = QWidget()
+        layout_c = QHBoxLayout(self.c_view)
+        
+        self.l_view = ImageView(1)
+        self.r_view = ImageView(2)
+        
+        send_button1 = QPushButton("←")
+        send_button1.setFixedWidth(30)
+        self.l_view.toolbar.addWidget(send_button1)
+        send_button1.clicked.connect(partial(self.send_to, 1, 0))
+        send_button1.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        send_button1.customContextMenuRequested.connect(self.show_send_context_menu)
+        layout_c.addWidget(self.l_view.container)
+        
+        send_button2 = QPushButton("←←")
+        send_button2.setFixedWidth(30)
+        self.r_view.toolbar.addWidget(send_button2)
+        send_button2.clicked.connect(partial(self.send_to, 2, 0))
+        send_button2.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        send_button2.customContextMenuRequested.connect(self.show_send_context_menu)
+        layout_c.addWidget(self.r_view.container)
 
         self.collection_windows, self.collection_idx = [], 0
-        self.l_view.image_loaded.connect(self.compare_metadata); self.r_view.image_loaded.connect(self.compare_metadata); self.l_view.metaarea_changed.connect(self.compare_metadata); self.r_view.metaarea_changed.connect(self.compare_metadata)
-        self.tab_widget.addTab(self.c_view, "比較"); self.tab_widget.currentChanged.connect(self.on_tab_changed)
+        
+        self.l_view.image_loaded.connect(self.compare_metadata)
+        self.r_view.image_loaded.connect(self.compare_metadata)
+        self.l_view.metaarea_changed.connect(self.compare_metadata)
+        self.r_view.metaarea_changed.connect(self.compare_metadata)
+        
+        # ★追加：チェックボックスの状態変化で比較メタデータを再描画
+        self.l_view.highlight_toggled.connect(self.compare_metadata)
+        self.r_view.highlight_toggled.connect(self.compare_metadata)
+        
+        self.tab_widget.addTab(self.c_view, "比較")
+        self.tab_widget.currentChanged.connect(self.on_tab_changed)
 
         self.views = [self.m_view, self.l_view, self.r_view]
         self.cp_tags = ["Prompt", "Negative prompt", "Steps", "Sampler", "CFG scale", "Seed", "Size", "Model", "VAE", "Denoising strength", "Variation seed", "Variation seed strength", "Clip skip"]
@@ -1360,7 +1687,7 @@ class ImageViewer(QMainWindow):
 
     def open_forge_panel_if_hidden(self):
         if self.forge_panel.isHidden():
-            # 開く前のサイズを確実に記憶する！
+
             self.saved_viewer_width = self.width()
             self.forge_panel.setMinimumWidth(500) # 開くときはパネル最小幅を復活
             self.resize(self.saved_viewer_width + self.panel_default_width + 5, self.height())
@@ -1370,13 +1697,11 @@ class ImageViewer(QMainWindow):
     def close_forge_panel(self):
         if not self.forge_panel.isHidden():
             self.forge_panel.hide()
-            # 1350px壁解決策②：隠す際に「パネル最小サイズ制限」を0にリセットしてQtの呪縛を解く！
+
             self.forge_panel.setMinimumWidth(0)
             self.setMinimumWidth(600) # ウィンドウ全体の最小制限も一時解除
             self.updateGeometry()     # Qtにサイズ制限の再計算を強制する
             
-            # 記憶していた元の幅へ1ピクセルのズレもなく復元（記憶がなければ引き算）
-            #target_width = self.saved_viewer_width if self.saved_viewer_width else max(600, self.width() - self.panel_default_width)
             if self.forge_panel.width() == 500:
                 target_width = self.saved_viewer_width
             else:
@@ -1395,44 +1720,174 @@ class ImageViewer(QMainWindow):
         elif sender.text() == "←←": send_move.setEnabled(self.r_view.current_folder != ""); send_move.triggered.connect(partial(self.send_and_move, 2, 0))
         menu.exec(sender.mapToGlobal(pos))
     def send_and_move(self, source, target): self.send_to(source, target); self.tab_widget.setCurrentIndex(target)
+
+    # def compare_metadata(self):
+    #     if self.l_view.current_image_path and self.r_view.current_image_path:
+    #         left_metadata, right_metadata = self.l_view.metadata, self.r_view.metadata
+    #         if not left_metadata or not right_metadata: self.l_view.display_metadata(self.l_view.metadata); self.r_view.display_metadata(self.r_view.metadata); return
+    #     elif self.l_view.current_image_path: self.l_view.display_metadata(self.l_view.metadata); return
+    #     elif self.r_view.current_image_path: self.r_view.display_metadata(self.r_view.metadata); return
+    #     else: return
+    #     left_layout, right_layout = self.l_view.metadata_layout, self.r_view.metadata_layout
+    #     while child := left_layout.takeAt(0):
+    #         if child.widget(): child.widget().deleteLater()
+    #     while child := right_layout.takeAt(0):
+    #         if child.widget(): child.widget().deleteLater()
+    #     l_enable_tags, r_enable_tags, all_tag = self.l_view.meta_tags, self.r_view.meta_tags, list(left_metadata.keys())
+    #     for item in right_metadata.keys():
+    #         if item not in all_tag: all_tag.append(item)        
+    #     self.cp_tags = all_tag.copy()
+
+    #     for key in self.cp_tags[0:2]:
+    #         left_value, right_value = left_metadata.get(key, ""), right_metadata.get(key, "")
+    #         only_in_left, only_in_right = set([s.strip() for s in left_value.split(",") if s.strip()]) - set([s.strip() for s in right_value.split(",") if s.strip()]), set([s.strip() for s in right_value.split(",") if s.strip()]) - set([s.strip() for s in left_value.split(",") if s.strip()])
+    #         if key in l_enable_tags:
+    #             left_label = MetadataLabel(key, left_value)
+    #             left_label.r_button_clicked.connect(self.l_view.selectItems)
+    #             left_label.send_single_to_forge.connect(self.on_send_single_to_forge)
+    #             left_label.send_all_to_forge.connect(lambda auto: self.on_send_all_to_forge(self.l_view.metadata, auto))
+    #             left_layout.addWidget(left_label)
+    #             left_label.apply_highlight(only_in_left, "#ffff80")
+    #         if key in r_enable_tags:
+    #             right_label = MetadataLabel(key, right_value)
+    #             right_label.r_button_clicked.connect(self.r_view.selectItems)
+    #             right_label.send_single_to_forge.connect(self.on_send_single_to_forge)
+    #             right_label.send_all_to_forge.connect(lambda auto: self.on_send_all_to_forge(self.r_view.metadata, auto))
+    #             right_layout.addWidget(right_label)
+    #             right_label.apply_highlight(only_in_right, "#80ffff")
+
+    #     for key in self.cp_tags[2:]:
+    #         left_value, right_value = left_metadata.get(key, ""), right_metadata.get(key, "")
+    #         if key in l_enable_tags and left_value:
+    #             left_label = MetadataLabel(key, left_value)
+    #             left_label.r_button_clicked.connect(self.l_view.selectItems)
+    #             left_label.send_single_to_forge.connect(self.on_send_single_to_forge)
+    #             left_label.send_all_to_forge.connect(lambda auto: self.on_send_all_to_forge(self.l_view.metadata, auto))
+    #             left_layout.addWidget(left_label)
+    #         if key in r_enable_tags and right_value:
+    #             right_label = MetadataLabel(key, right_value); right_label.r_button_clicked.connect(self.r_view.selectItems); right_label.send_single_to_forge.connect(self.on_send_single_to_forge); right_label.send_all_to_forge.connect(lambda auto: self.on_send_all_to_forge(self.r_view.metadata, auto)); right_layout.addWidget(right_label)
+    #         if left_value != right_value:
+    #             if key in l_enable_tags and left_value: left_label.update_text(highlight=True)
+    #             if key in r_enable_tags and right_value: right_label.update_text(highlight=True)
+    #     left_layout.addStretch(); right_layout.addStretch()
+    #     left_layout.insertWidget(0, MetadataLabel("File", self.l_view.current_image_path.replace("\\", "/")))
+    #     right_layout.insertWidget(0, MetadataLabel("File", self.r_view.current_image_path.replace("\\", "/")))
+
     def compare_metadata(self):
+        if not self.l_view.current_image_path and not self.r_view.current_image_path:
+            return
+            
         if self.l_view.current_image_path and self.r_view.current_image_path:
-            left_metadata, right_metadata = self.l_view.metadata, self.r_view.metadata
-            if not left_metadata or not right_metadata: self.l_view.display_metadata(self.l_view.metadata); self.r_view.display_metadata(self.r_view.metadata); return
-        elif self.l_view.current_image_path: self.l_view.display_metadata(self.l_view.metadata); return
-        elif self.r_view.current_image_path: self.r_view.display_metadata(self.r_view.metadata); return
-        else: return
-        left_layout, right_layout = self.l_view.metadata_layout, self.r_view.metadata_layout
+            left_metadata = self.l_view.metadata
+            right_metadata = self.r_view.metadata
+            if not left_metadata or not right_metadata:
+                self.l_view.display_metadata(self.l_view.metadata)
+                self.r_view.display_metadata(self.r_view.metadata)
+                return
+        elif self.l_view.current_image_path:
+            self.l_view.display_metadata(self.l_view.metadata)
+            return
+        elif self.r_view.current_image_path:
+            self.r_view.display_metadata(self.r_view.metadata)
+            return
+
+        left_layout = self.l_view.metadata_layout
+        right_layout = self.r_view.metadata_layout
+        
         while child := left_layout.takeAt(0):
-            if child.widget(): child.widget().deleteLater()
+            if child.widget():
+                child.widget().deleteLater()
         while child := right_layout.takeAt(0):
-            if child.widget(): child.widget().deleteLater()
-        l_enable_tags, r_enable_tags, all_tag = self.l_view.meta_tags, self.r_view.meta_tags, list(left_metadata.keys())
+            if child.widget():
+                child.widget().deleteLater()
+                
+        l_enable_tags = self.l_view.meta_tags
+        r_enable_tags = self.r_view.meta_tags
+        
+        all_tag = list(left_metadata.keys())
         for item in right_metadata.keys():
-            if item not in all_tag: all_tag.append(item)        
+            if item not in all_tag:
+                all_tag.append(item)
         self.cp_tags = all_tag.copy()
+        
+        # ★追加：ハイライトの状態を確認
+        left_highlight_on = self.l_view.chk_highlight.isChecked()
+        right_highlight_on = self.r_view.chk_highlight.isChecked()
+        any_highlight_on = left_highlight_on or right_highlight_on
 
-        for key in self.cp_tags[0:2]:
-            left_value, right_value = left_metadata.get(key, ""), right_metadata.get(key, "")
-            only_in_left, only_in_right = set([s.strip() for s in left_value.split(",") if s.strip()]) - set([s.strip() for s in right_value.split(",") if s.strip()]), set([s.strip() for s in right_value.split(",") if s.strip()]) - set([s.strip() for s in left_value.split(",") if s.strip()])
-            if key in l_enable_tags:
-                left_label = MetadataLabel(key, left_value); left_label.r_button_clicked.connect(self.l_view.selectItems); left_label.send_single_to_forge.connect(self.on_send_single_to_forge); left_label.send_all_to_forge.connect(lambda auto: self.on_send_all_to_forge(self.l_view.metadata, auto)); left_layout.addWidget(left_label); left_label.apply_highlight(only_in_left, "#ffff80")
-            if key in r_enable_tags:
-                right_label = MetadataLabel(key, right_value); right_label.r_button_clicked.connect(self.r_view.selectItems); right_label.send_single_to_forge.connect(self.on_send_single_to_forge); right_label.send_all_to_forge.connect(lambda auto: self.on_send_all_to_forge(self.r_view.metadata, auto)); right_layout.addWidget(right_label); right_label.apply_highlight(only_in_right, "#80ffff")
+        # ★追加：左側の検索ワード抽出
+        l_highlight_word = ""
+        l_is_neg = False
+        if left_highlight_on:
+            l_query = self.l_view.text_box.text().strip()
+            l_is_neg = l_query.startswith("-")
+            l_highlight_word = l_query[1:].strip() if l_is_neg else l_query
+            
+        # ★追加：右側の検索ワード抽出
+        r_highlight_word = ""
+        r_is_neg = False
+        if right_highlight_on:
+            r_query = self.r_view.text_box.text().strip()
+            r_is_neg = r_query.startswith("-")
+            r_highlight_word = r_query[1:].strip() if r_is_neg else r_query
 
-        for key in self.cp_tags[2:]:
-            left_value, right_value = left_metadata.get(key, ""), right_metadata.get(key, "")
-            if key in l_enable_tags and left_value:
-                left_label = MetadataLabel(key, left_value); left_label.r_button_clicked.connect(self.l_view.selectItems); left_label.send_single_to_forge.connect(self.on_send_single_to_forge); left_label.send_all_to_forge.connect(lambda auto: self.on_send_all_to_forge(self.l_view.metadata, auto)); left_layout.addWidget(left_label)
-            if key in r_enable_tags and right_value:
-                right_label = MetadataLabel(key, right_value); right_label.r_button_clicked.connect(self.r_view.selectItems); right_label.send_single_to_forge.connect(self.on_send_single_to_forge); right_label.send_all_to_forge.connect(lambda auto: self.on_send_all_to_forge(self.r_view.metadata, auto)); right_layout.addWidget(right_label)
-            if left_value != right_value:
-                if key in l_enable_tags and left_value: left_label.update_text(highlight=True)
-                if key in r_enable_tags and right_value: right_label.update_text(highlight=True)
-        left_layout.addStretch(); right_layout.addStretch()
+        # 展開して可読性を高めた統合比較ループ
+        for key in self.cp_tags:
+            left_value = left_metadata.get(key, "")
+            right_value = right_metadata.get(key, "")
+            
+            # ===== 左側に描画 =====
+            # プロンプト類（インデックス0,1）は値が無くても描画対象にする（既存の挙動を維持）
+            if key in l_enable_tags and (left_value or key in self.cp_tags[0:2]):
+                left_label = MetadataLabel(key, left_value)
+                left_label.r_button_clicked.connect(self.l_view.selectItems)
+                left_label.send_single_to_forge.connect(self.on_send_single_to_forge)
+                left_label.send_all_to_forge.connect(lambda auto, m=left_metadata: self.on_send_all_to_forge(m, auto))
+                left_layout.addWidget(left_label)
+                
+                # いずれかのハイライトがONの場合は差分比較を無効化する
+                if any_highlight_on:
+                    # 左側のハイライトがONなら検索ワードを強調
+                    if left_highlight_on and l_highlight_word:
+                        target_key = "Negative prompt" if l_is_neg else "Prompt"
+                        if key == target_key:
+                            left_label.apply_highlight([l_highlight_word], "#ff99ff")
+                else:
+                    # 全てOFFなら通常の差分比較を行う
+                    if key in self.cp_tags[0:2]:
+                        only_in_left = set([s.strip() for s in left_value.split(",") if s.strip()]) - set([s.strip() for s in right_value.split(",") if s.strip()])
+                        left_label.apply_highlight(only_in_left, "#ffff80")
+                    elif left_value != right_value:
+                        left_label.update_text(highlight=True)
+
+            # ===== 右側に描画 =====
+            if key in r_enable_tags and (right_value or key in self.cp_tags[0:2]):
+                right_label = MetadataLabel(key, right_value)
+                right_label.r_button_clicked.connect(self.r_view.selectItems)
+                right_label.send_single_to_forge.connect(self.on_send_single_to_forge)
+                right_label.send_all_to_forge.connect(lambda auto, m=right_metadata: self.on_send_all_to_forge(m, auto))
+                right_layout.addWidget(right_label)
+                
+                # いずれかのハイライトがONの場合は差分比較を無効化する
+                if any_highlight_on:
+                    # 右側のハイライトがONなら検索ワードを強調
+                    if right_highlight_on and r_highlight_word:
+                        target_key = "Negative prompt" if r_is_neg else "Prompt"
+                        if key == target_key:
+                            right_label.apply_highlight([r_highlight_word], "#ff99ff")
+                else:
+                    # 全てOFFなら通常の差分比較を行う
+                    if key in self.cp_tags[0:2]:
+                        only_in_right = set([s.strip() for s in right_value.split(",") if s.strip()]) - set([s.strip() for s in left_value.split(",") if s.strip()])
+                        right_label.apply_highlight(only_in_right, "#80ffff")
+                    elif left_value != right_value:
+                        right_label.update_text(highlight=True)
+                        
+        left_layout.addStretch()
+        right_layout.addStretch()
         left_layout.insertWidget(0, MetadataLabel("File", self.l_view.current_image_path.replace("\\", "/")))
         right_layout.insertWidget(0, MetadataLabel("File", self.r_view.current_image_path.replace("\\", "/")))
-            
+
     def send_to(self, source, target):
         self.views[target].current_folder, self.views[target].current_image_path, self.views[target].image_label.image_path = self.views[source].current_folder, self.views[source].current_image_path, self.views[source].current_image_path
         self.views[target].load_image(self.views[target].current_image_path); self.views[target].open_button.current_folder = self.views[source].current_folder; self.resize_image(target)
