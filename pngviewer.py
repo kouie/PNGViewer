@@ -775,6 +775,7 @@ class CollectionLoadDialog(QDialog):
         btn_cancel = QPushButton("キャンセル"); btn_cancel.clicked.connect(self.reject)
         btn_layout.addStretch(); btn_layout.addWidget(btn_load); btn_layout.addWidget(btn_cancel); layout.addLayout(btn_layout)
         self.load_list()
+
     def load_list(self):
         self.list_widget.clear()
         files = [os.path.join(COLLECTIONS_DIR, f) for f in os.listdir(COLLECTIONS_DIR) if f.endswith(".json")]
@@ -785,13 +786,25 @@ class CollectionLoadDialog(QDialog):
                     data = json.load(f); items_data.append({"path": fpath, "memo": data.get("memo", "Untitled"), "timestamp": data.get("timestamp", ""), "images": data.get("images", [])})
             except Exception: continue
         items_data.sort(key=lambda x: x["timestamp"] if self.combo_sort.currentIndex() == 0 else x["memo"].lower(), reverse=(self.combo_sort.currentIndex() == 0))
+
         for item_d in items_data:
-            list_item = QListWidgetItem(self.list_widget); list_item.setData(Qt.ItemDataRole.UserRole, item_d)
-            row_widget = QWidget(); row_layout = QHBoxLayout(row_widget); row_layout.setContentsMargins(5, 2, 5, 2)
+            list_item = QListWidgetItem(self.list_widget)
+            list_item.setData(Qt.ItemDataRole.UserRole, item_d)
+            row_widget = QWidget()
+            row_layout = QHBoxLayout(row_widget)
+            row_layout.setContentsMargins(5, 2, 5, 2)
             lbl_text = QLabel(f"{item_d['memo']}   {item_d['timestamp']}")
-            btn_del = QPushButton("削除"); btn_del.setFixedSize(45, 24); btn_del.setStyleSheet("background-color: #d32f2f; color: white;"); btn_del.clicked.connect(partial(self.delete_item, fpath, list_item))
-            row_layout.addWidget(lbl_text); row_layout.addStretch(); row_layout.addWidget(btn_del)
-            list_item.setSizeHint(row_widget.sizeHint()); self.list_widget.setItemWidget(list_item, row_widget)
+            btn_del = QPushButton("削除")
+            btn_del.setFixedSize(45, 24)
+            btn_del.setStyleSheet("background-color: #d32f2f; color: white;")
+            #btn_del.clicked.connect(partial(self.delete_item, fpath, list_item))
+            btn_del.clicked.connect(partial(self.delete_item, item_d['path'], list_item))
+            row_layout.addWidget(lbl_text)
+            row_layout.addStretch()
+            row_layout.addWidget(btn_del)
+            list_item.setSizeHint(row_widget.sizeHint())
+            self.list_widget.setItemWidget(list_item, row_widget)
+
     def delete_item(self, fpath, list_item):
         if QMessageBox.question(self, "確認", "このコレクションメモを削除しますか？") == QMessageBox.StandardButton.Yes:
             try:
